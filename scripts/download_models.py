@@ -146,6 +146,44 @@ def download_slm(model_size: str = "3b") -> bool:
         return False
 
 
+def download_diarization() -> bool:
+    """
+    Download NeMo Streaming Sortformer diarization model.
+
+    Model: nvidia/diar_streaming_sortformer_4spk-v2
+    Size: ~988MB (.nemo format)
+    """
+    repo = "nvidia/diar_streaming_sortformer_4spk-v2"
+    filename = "diar_streaming_sortformer_4spk-v2.nemo"
+
+    dest_dir = settings.diarization_model_dir
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / filename
+
+    if dest_path.exists():
+        logger.info(f"✓ Diarization model already exists: {dest_path}")
+        return True
+
+    logger.info(f"Downloading diarization model: {repo}")
+    logger.info(f"  Destination: {dest_path}")
+    logger.info("  Size: ~988MB")
+
+    try:
+        hf_hub_download(
+            repo_id=repo,
+            filename=filename,
+            local_dir=str(dest_dir),
+            local_dir_use_symlinks=False,
+        )
+        logger.info(f"✓ Diarization model saved to {dest_path}")
+        logger.info(f"  Set DIARIZATION_MODEL_PATH={dest_path} in .env to use it")
+        return True
+
+    except Exception as e:
+        logger.error(f"✗ Failed to download diarization model: {e}")
+        return False
+
+
 def main():
     """Main download function."""
     parser = argparse.ArgumentParser(description="Download models for AI Proctoring System")
@@ -156,7 +194,10 @@ def main():
         default="3b",
         help="SLM model size (default: 3b)",
     )
-    parser.add_argument("--all", action="store_true", help="Download all models including SLM")
+    parser.add_argument(
+        "--diarization", action="store_true", help="Download diarization model (Phase 6)"
+    )
+    parser.add_argument("--all", action="store_true", help="Download all models")
     args = parser.parse_args()
 
     logger.info("=" * 60)
@@ -169,7 +210,7 @@ def main():
 
     results = []
 
-    if not args.slm:
+    if not args.slm and not args.diarization:
         # Default: download base models
         logger.info("\n[1/2] Downloading Silero VAD...")
         results.append(("Silero VAD", download_silero_vad()))
@@ -180,6 +221,10 @@ def main():
     if args.slm or args.all:
         logger.info(f"\n[SLM] Downloading Qwen2.5-{args.slm_size.upper()}-Instruct-GGUF...")
         results.append((f"SLM (Qwen2.5-{args.slm_size})", download_slm(args.slm_size)))
+
+    if args.diarization or args.all:
+        logger.info("\n[Diarization] Downloading NeMo Streaming Sortformer...")
+        results.append(("Diarization (NeMo Sortformer)", download_diarization()))
 
     # Summary
     logger.info("\n" + "=" * 60)
@@ -194,8 +239,13 @@ def main():
 
     if all_success:
         logger.info("\n✓ All models downloaded successfully!")
+        hints = []
         if args.slm or args.all:
-            logger.info("\nNext: set SLM_MODEL_PATH in .env and restart the server")
+            hints.append("Set SLM_MODEL_PATH in .env")
+        if args.diarization or args.all:
+            hints.append("Set DIARIZATION_MODEL_PATH in .env")
+        if hints:
+            logger.info("\nNext steps: " + " | ".join(hints))
         else:
             logger.info("\nYou can now start the server with:")
             logger.info("  uvicorn src.api.main:app --reload")

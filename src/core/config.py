@@ -37,9 +37,6 @@ class Settings(BaseSettings):
     similarity_threshold_high: float = Field(
         default=0.75, description="High similarity threshold"
     )
-    speaker_verification_threshold: float = Field(
-        default=0.75, description="Speaker verification threshold"
-    )
     cheating_threshold: float = Field(default=10.0, description="Cheating detection threshold")
     decay_factor: float = Field(default=0.9, description="Suspicion score decay factor")
 
@@ -78,6 +75,18 @@ class Settings(BaseSettings):
         default=3.0, description="Minimum audio length (seconds) required for verification"
     )
 
+    # Diarization / Overlap Detection configuration (Phase 6)
+    diarization_enabled: bool = Field(default=True, description="Enable overlap detection")
+    diarization_model_path: Optional[Path] = Field(
+        default=None,
+        description="Path to NeMo .nemo model file for diarization",
+        alias="DIARIZATION_MODEL_PATH"
+    )
+    min_diarization_audio_seconds: float = Field(
+        default=10.0,
+        description="Minimum audio length (seconds) required for diarization"
+    )
+
     # SLM configuration (Phase 3)
     slm_enabled: bool = Field(default=True, description="Enable SLM reasoning layer")
     slm_model_path: Optional[Path] = Field(
@@ -102,6 +111,11 @@ class Settings(BaseSettings):
     def speaker_model_dir(self) -> Path:
         """Get speaker verification model cache directory."""
         return self.model_cache_dir / "speaker"
+
+    @property
+    def diarization_model_dir(self) -> Path:
+        """Get diarization model directory."""
+        return self.model_cache_dir / "diarization"
 
     @property
     def vad_model_path(self) -> Path:
@@ -147,6 +161,7 @@ class Settings(BaseSettings):
             self.stt_model_path,
             self.slm_model_dir,
             self.speaker_model_dir,
+            self.diarization_model_dir,
         ]
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)

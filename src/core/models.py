@@ -125,6 +125,7 @@ class HealthResponse(BaseModel):
     version: str = Field(..., description="API version")
     slm_loaded: bool = Field(default=False, description="SLM reasoning model loaded")
     verifier_loaded: bool = Field(default=False, description="Speaker verifier model loaded")
+    diarization_loaded: bool = Field(default=False, description="Diarization model loaded")
 
 
 class SessionState(BaseModel):
@@ -149,5 +150,9 @@ class SessionState(BaseModel):
     last_verification_similarity: float = 1.0
     last_verification_failed: bool = False
     verification_failures_count: int = 0
+
+    # Overlap detection state (Phase 6)
+    last_overlap_detected: bool = False
+    overlap_count: int = 0
 
     model_config = {"arbitrary_types_allowed": True}

@@ -44,7 +44,20 @@ class SpeakerVerifier:
 
     def load_model(self) -> None:
         """Load ECAPA-TDNN model from SpeechBrain."""
-        from speechbrain.inference.classifiers import EncoderClassifier  # type: ignore[import-untyped]
+        import torchaudio
+
+        # Compatibility patch: torchaudio >= 2.x removed list_audio_backends
+        # SpeechBrain 1.x still calls it — provide a no-op stub
+        if not hasattr(torchaudio, "list_audio_backends"):
+            torchaudio.list_audio_backends = lambda: []  # type: ignore[attr-defined]
+            logger.debug("Patched torchaudio.list_audio_backends for SpeechBrain compatibility")
+
+        try:
+            # speechbrain >= 1.0
+            from speechbrain.inference.classifiers import EncoderClassifier  # type: ignore[import-untyped]
+        except ImportError:
+            # speechbrain 0.5.x
+            from speechbrain.pretrained import EncoderClassifier  # type: ignore[import-untyped]
 
         logger.info("Loading SpeechBrain ECAPA-TDNN: %s", MODEL_NAME)
 

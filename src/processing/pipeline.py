@@ -15,6 +15,7 @@ from src.core.session import session_manager
 from src.processing.buffer import AudioBuffer
 from src.processing.decision_engine import decision_engine
 from src.processing.embedding import EmbeddingProcessor
+from src.processing.overlap_detector import OverlapDetector
 from src.processing.slm import SLMProcessor
 from src.processing.speaker_verification import SpeakerVerifier
 from src.processing.stt import STTProcessor
@@ -29,7 +30,7 @@ VERIFICATION_AUDIO_BUFFER_SECONDS = 30
 
 
 class AudioPipeline:
-    """Audio processing pipeline: VAD → Buffer → STT → Embedding → SLM → Decision Engine."""
+    """Audio processing pipeline: VAD → Buffer → STT → Embedding → SLM → Diarization → Decision Engine."""
 
     def __init__(
         self,
@@ -39,12 +40,14 @@ class AudioPipeline:
         transcript_store: TranscriptStore,
         slm_processor: Optional[SLMProcessor] = None,
         speaker_verifier: Optional[SpeakerVerifier] = None,
+        overlap_detector: Optional[OverlapDetector] = None,
     ):
         self.vad = vad_processor
         self.stt = stt_processor
         self.embedding = embedding_processor
         self.slm = slm_processor
         self.verifier = speaker_verifier
+        self.overlap_detector = overlap_detector
         self.transcript_store = transcript_store
 
         self._should_stop: dict[str, bool] = {}
@@ -291,16 +294,42 @@ class AudioPipeline:
                     f"(similarity={similarity:.2f})"
                 )
 
-            # 4. Decision Engine
+            # 4. Overlap detection (runs on rolling audio buffer for context)
+            overlap_detected = False
+            if self.overlap_detector is not None and settings.diarization_enabled:
+                audio_deque = self._recent_audio.get(session_id)
+                if audio_deque is not None:
+                    min_samples = int(
+                        settings.min_diarization_audio_seconds * settings.audio_sample_rate
+                    )
+                    if len(audio_deque) >= min_samples:
+                        audio_buffer = np.array(list(audio_deque), dtype=np.float32)
+                        loop = asyncio.get_event_loop()
+                        overlap_detected, overlap_conf = await loop.run_in_executor(
+                            None,
+                            self.overlap_detector.detect,
+                            audio_buffer,
+                            settings.audio_sample_rate,
+                        )
+                        if overlap_detected:
+                            session.last_overlap_detected = True
+                            session.overlap_count += 1
+                            logger.info(
+                                f"[{session_id[:8]}] Overlap detected "
+                                f"(conf={overlap_conf:.2f}, count={session.overlap_count})"
+                            )
+
+            # 5. Decision Engine
             state = decision_engine.process(
                 session_id=session_id,
                 text=text,
                 similarity_score=similarity,
                 timestamp=timestamp,
                 slm_verdict=slm_verdict,
+                overlap_detected=overlap_detected,
             )
 
-            # 5. Sync back to session state
+            # 6. Sync back to session state
             session.suspicion_score = state["suspicion_score"]
             session.cheating_flag = state["cheating_flag"]
             session.flagged_segments_count = state["flagged_count"]

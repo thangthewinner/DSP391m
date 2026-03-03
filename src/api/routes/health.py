@@ -24,6 +24,7 @@ async def health_check():
     )
     slm_loaded = p is not None and p.slm is not None
     verifier_loaded = p is not None and p.verifier is not None
+    diarization_loaded = p is not None and p.overlap_detector is not None
 
     return HealthResponse(
         status="healthy" if models_loaded else "initializing",
@@ -31,4 +32,5 @@ async def health_check():
         version=__version__,
         slm_loaded=slm_loaded,
         verifier_loaded=verifier_loaded,
+        diarization_loaded=diarization_loaded,
     )

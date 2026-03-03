@@ -12,6 +12,7 @@ from src.api.websocket import audio_handler
 from src.core.config import settings
 from src.processing import pipeline as pipeline_module
 from src.processing.embedding import EmbeddingProcessor
+from src.processing.overlap_detector import OverlapDetector
 from src.processing.pipeline import AudioPipeline
 from src.processing.slm import SLMProcessor
 from src.processing.speaker_verification import SpeakerVerifier
@@ -111,6 +112,27 @@ async def lifespan(app: FastAPI):
         else:
             logger.info("Speaker verification disabled (SPEAKER_VERIFICATION_ENABLED=false)")
 
+        # Initialize Overlap Detector / Diarization (Phase 6)
+        overlap_detector = None
+        if settings.diarization_enabled and settings.diarization_model_path:
+            try:
+                overlap_detector = OverlapDetector(
+                    model_path=settings.diarization_model_path,
+                    device=settings.torch_device,
+                    min_audio_seconds=settings.min_diarization_audio_seconds,
+                )
+                overlap_detector.load_model()
+            except FileNotFoundError as e:
+                logger.warning(f"Diarization model not found, running without it: {e}")
+                overlap_detector = None
+            except Exception as e:
+                logger.warning(f"Failed to load Diarization model, running without it: {e}")
+                overlap_detector = None
+        elif settings.diarization_enabled:
+            logger.info("Diarization enabled but DIARIZATION_MODEL_PATH not set — skipping")
+        else:
+            logger.info("Diarization disabled (DIARIZATION_ENABLED=false)")
+
         # Initialize transcript store
         transcript_store = TranscriptStore()
 
@@ -122,12 +144,19 @@ async def lifespan(app: FastAPI):
             transcript_store=transcript_store,
             slm_processor=slm,
             speaker_verifier=verifier,
+            overlap_detector=overlap_detector,
         )
 
         slm_status = f"loaded ({settings.slm_model_path.name})" if slm else "disabled/not loaded"
         verifier_status = "loaded" if verifier else "disabled/not loaded"
+        diar_status = (
+            f"loaded ({settings.diarization_model_path.name})"
+            if overlap_detector
+            else "disabled/not loaded"
+        )
         logger.info(
-            f"All models loaded successfully (SLM: {slm_status}, Verifier: {verifier_status})"
+            f"All models loaded successfully "
+            f"(SLM: {slm_status}, Verifier: {verifier_status}, Diarization: {diar_status})"
         )
 
     except Exception as e:

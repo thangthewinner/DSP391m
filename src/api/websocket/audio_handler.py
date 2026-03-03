@@ -120,6 +120,16 @@ async def audio_stream_handler(websocket: WebSocket, session_id: str):
                         })
                         session.last_verification_failed = False  # reset after push
 
+                    # Push overlap alert when multiple speakers detected
+                    if session.last_overlap_detected:
+                        await websocket.send_json({
+                            "type": "overlap_alert",
+                            "overlap_count": session.overlap_count,
+                            "message": "⚠️ Phát hiện nhiều người nói!",
+                            "timestamp": message.timestamp,
+                        })
+                        session.last_overlap_detected = False  # reset after push
+
                 except asyncio.QueueFull:
                     logger.warning(f"Audio queue full for session {session_id}")
                     error_response = ErrorResponse(
@@ -146,7 +156,7 @@ async def audio_stream_handler(websocket: WebSocket, session_id: str):
                 message=f"Internal error: {str(e)}",
             )
             await websocket.send_json(error_response.model_dump())
-        except:
+        except Exception:
             pass
 
     finally:
@@ -159,6 +169,9 @@ async def audio_stream_handler(websocket: WebSocket, session_id: str):
         except asyncio.TimeoutError:
             logger.warning(f"Processing task timeout for session {session_id}")
             processing_task.cancel()
+
+        # Clean up session resources (queues, tasks) to prevent memory leak
+        session_manager.cleanup_session(session_id)
 
         logger.info(
             f"WebSocket closed for session {session_id}, processed {chunk_count} chunks"

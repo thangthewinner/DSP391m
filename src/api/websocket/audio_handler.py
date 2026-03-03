@@ -92,13 +92,22 @@ async def audio_stream_handler(websocket: WebSocket, session_id: str):
                     ack = AckResponse(chunk_id=chunk_count)
                     await websocket.send_json(ack.model_dump())
 
-                    # Send status update every 10 chunks
-                    if chunk_count % 10 == 0:
+                    # Send status update every 5 chunks
+                    if chunk_count % 5 == 0:
                         status_update = StatusUpdateResponse(
                             suspicion_score=session.suspicion_score,
                             cheating_flag=session.cheating_flag,
                         )
                         await websocket.send_json(status_update.model_dump())
+
+                    # Push cheating alert immediately when flag is set
+                    if session.cheating_flag:
+                        await websocket.send_json({
+                            "type": "cheating_alert",
+                            "suspicion_score": session.suspicion_score,
+                            "message": "⚠️ Phát hiện hành vi gian lận!",
+                            "timestamp": session.suspicion_score,
+                        })
 
                 except asyncio.QueueFull:
                     logger.warning(f"Audio queue full for session {session_id}")
@@ -141,6 +150,5 @@ async def audio_stream_handler(websocket: WebSocket, session_id: str):
             processing_task.cancel()
 
         logger.info(
-            f"WebSocket closed for session {session_id}, "
-            f"processed {chunk_count} chunks"
+            f"WebSocket closed for session {session_id}, processed {chunk_count} chunks"
         )

@@ -14,6 +14,8 @@ from src.core.models import (
     SessionStatus,
 )
 from src.core.session import session_manager
+from src.processing import pipeline as pipeline_module
+from src.processing.decision_engine import decision_engine
 from src.storage.transcript_store import TranscriptStore
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,16 @@ async def start_exam(request: ExamSessionCreate):
             exam_id=request.exam_id,
             exam_question=request.exam_question,
         )
+
+        # Pre-compute question embedding for similarity detection
+        p = pipeline_module.pipeline
+        if p and request.exam_question.strip():
+            import asyncio
+            loop = asyncio.get_event_loop()
+            session.question_embedding = await loop.run_in_executor(
+                None, p.embedding.embed, request.exam_question
+            )
+            logger.info(f"Question embedding computed for session {session.session_id}")
 
         websocket_url = (
             f"ws://{settings.api_host}:{settings.api_port}/ws/audio/{session.session_id}"
@@ -111,17 +123,25 @@ async def get_exam_report(session_id: str):
     elif session.started_at:
         elapsed = (datetime.now() - session.started_at).total_seconds()
 
+    decision_report = decision_engine.get_report(session_id)
+
     return {
         "session_id": session_id,
         "student_id": session.student_id,
         "exam_id": session.exam_id,
+        "exam_question": session.exam_question,
         "status": session.status.value,
         "started_at": session.started_at.isoformat(),
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
         "elapsed_seconds": elapsed,
-        "suspicion_score": session.suspicion_score,
-        "cheating_flag": session.cheating_flag,
-        "flagged_segments_count": session.flagged_segments_count,
+        # Decision engine results
+        "cheating_detected": decision_report["cheating_detected"],
+        "suspicion_score": decision_report["suspicion_score"],
+        "max_suspicion_score": decision_report["max_suspicion_score"],
+        "confidence": decision_report["confidence"],
+        "rationale": decision_report["rationale"],
+        "flagged_segments": decision_report["flagged_segments"],
+        # Full transcript
         "transcript": [
             {
                 "start": seg.timestamp_start,

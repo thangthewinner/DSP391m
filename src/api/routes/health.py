@@ -6,7 +6,7 @@ from fastapi import APIRouter
 
 from src import __version__
 from src.core.models import HealthResponse
-from src.processing.pipeline import pipeline
+from src.processing import pipeline as pipeline_module
 
 logger = logging.getLogger(__name__)
 
@@ -15,13 +15,13 @@ router = APIRouter()
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
-    """
-    Health check endpoint.
-
-    Returns:
-        Health status and model loading status
-    """
-    models_loaded = pipeline is not None and pipeline.vad.model is not None and pipeline.stt.model is not None
+    """Health check endpoint."""
+    p = pipeline_module.pipeline
+    models_loaded = (
+        p is not None
+        and p.vad.model is not None
+        and p.stt.model is not None
+    )
 
     return HealthResponse(
         status="healthy" if models_loaded else "initializing",

@@ -11,6 +11,7 @@ from src.api.routes import enrollment, exam, health
 from src.api.websocket import audio_handler
 from src.core.config import settings
 from src.processing import pipeline as pipeline_module
+from src.processing.embedding import EmbeddingProcessor
 from src.processing.pipeline import AudioPipeline
 from src.processing.stt import STTProcessor
 from src.processing.vad import VADProcessor
@@ -66,6 +67,10 @@ async def lifespan(app: FastAPI):
         
         stt.load_model(model_path=model_path)
 
+        # Initialize Embedding
+        embedding = EmbeddingProcessor(device=settings.torch_device)
+        embedding.load_model()
+
         # Initialize transcript store
         transcript_store = TranscriptStore()
 
@@ -73,6 +78,7 @@ async def lifespan(app: FastAPI):
         pipeline_module.pipeline = AudioPipeline(
             vad_processor=vad,
             stt_processor=stt,
+            embedding_processor=embedding,
             transcript_store=transcript_store,
         )
 

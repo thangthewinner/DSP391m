@@ -4,6 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
+import numpy as np
 from pydantic import BaseModel, Field
 
 
@@ -138,5 +139,7 @@ class SessionState(BaseModel):
     cheating_flag: bool = False
     transcript_segments: list[TranscriptSegment] = Field(default_factory=list)
     flagged_segments_count: int = 0
+    # Pre-computed embedding of exam_question (set on session start)
+    question_embedding: Optional[Any] = Field(default=None, exclude=True)
 
     model_config = {"arbitrary_types_allowed": True}

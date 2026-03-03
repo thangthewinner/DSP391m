@@ -123,6 +123,7 @@ class HealthResponse(BaseModel):
     status: str = Field(..., description="Health status")
     models_loaded: bool = Field(..., description="Models loaded status")
     version: str = Field(..., description="API version")
+    slm_loaded: bool = Field(default=False, description="SLM reasoning model loaded")
 
 
 class SessionState(BaseModel):

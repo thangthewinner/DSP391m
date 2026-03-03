@@ -1,9 +1,10 @@
 """
 Decision Engine — stateful suspicion scoring with sliding window decay.
 
-Scoring weights (from decision_engine.md):
+Scoring weights:
   similarity LOW  (≥0.60) → +1.0 pt
   similarity HIGH (≥0.75) → +2.0 pt
+  SLM YES (Phase 3)        → +2.0 pt
   speaker overlap          → +1.0 pt  (Phase 6)
   verification failure     → +3.0 pt  (Phase 5)
 
@@ -35,6 +36,7 @@ class SuspicionEvent:
     text: str
     similarity_score: float
     points_added: float
+    slm_verdict: bool = False
     overlap_detected: bool = False
     verification_failed: bool = False
 
@@ -93,12 +95,16 @@ class DecisionEngine:
             return 1.0
         return 0.0
 
+    def _score_slm(self, slm_verdict: bool) -> float:
+        return 2.0 if slm_verdict else 0.0
+
     def process(
         self,
         session_id: str,
         text: str,
         similarity_score: float,
         timestamp: Optional[float] = None,
+        slm_verdict: bool = False,
         overlap_detected: bool = False,
         verification_failed: bool = False,
     ) -> dict:
@@ -110,6 +116,7 @@ class DecisionEngine:
             text: Transcribed text
             similarity_score: Cosine similarity to exam question (0-1)
             timestamp: Event timestamp (defaults to now)
+            slm_verdict: SLM reasoning result — True = related (Phase 3)
             overlap_detected: Multiple speakers detected (Phase 6)
             verification_failed: Speaker identity mismatch (Phase 5)
 
@@ -127,6 +134,7 @@ class DecisionEngine:
 
         # Calculate points
         points = self._score_similarity(similarity_score)
+        points += self._score_slm(slm_verdict)
         points += 1.0 if overlap_detected else 0.0
         points += 3.0 if verification_failed else 0.0
 
@@ -140,6 +148,7 @@ class DecisionEngine:
                 text=text,
                 similarity_score=similarity_score,
                 points_added=points,
+                slm_verdict=slm_verdict,
                 overlap_detected=overlap_detected,
                 verification_failed=verification_failed,
             )
@@ -148,7 +157,7 @@ class DecisionEngine:
 
             logger.info(
                 f"[{session_id[:8]}] suspicion +{points:.1f} → {state.suspicion_score:.2f} "
-                f"(similarity={similarity_score:.2f}, text='{text[:40]}')"
+                f"(similarity={similarity_score:.2f}, slm={slm_verdict}, text='{text[:40]}')"
             )
 
         # Check cheating threshold
@@ -188,6 +197,7 @@ class DecisionEngine:
         rationale_parts = []
         high_sim = sum(1 for e in state.flagged_events if e.similarity_score >= self.similarity_high)
         low_sim = sum(1 for e in state.flagged_events if self.similarity_low <= e.similarity_score < self.similarity_high)
+        slm_confirmed = sum(1 for e in state.flagged_events if e.slm_verdict)
         overlaps = sum(1 for e in state.flagged_events if e.overlap_detected)
         verif_fails = sum(1 for e in state.flagged_events if e.verification_failed)
 
@@ -195,6 +205,8 @@ class DecisionEngine:
             rationale_parts.append(f"{high_sim} đoạn có độ tương đồng cao với câu hỏi")
         if low_sim:
             rationale_parts.append(f"{low_sim} đoạn có độ tương đồng trung bình")
+        if slm_confirmed:
+            rationale_parts.append(f"{slm_confirmed} đoạn được AI xác nhận liên quan đến câu hỏi thi")
         if overlaps:
             rationale_parts.append(f"{overlaps} lần phát hiện nhiều người nói")
         if verif_fails:
@@ -219,6 +231,7 @@ class DecisionEngine:
                     "timestamp": e.timestamp,
                     "text": e.text,
                     "similarity_score": round(e.similarity_score, 3),
+                    "slm_verdict": e.slm_verdict,
                     "points_added": e.points_added,
                 }
                 for e in state.flagged_events

@@ -56,10 +56,30 @@ class Settings(BaseSettings):
         default="vinai/PhoWhisper-small", description="STT model name"
     )
     stt_model_override: Optional[Path] = Field(
-        default=None, 
+        default=None,
         description="Optional: Path to converted STT model (overrides stt_model_name)",
         alias="STT_MODEL_PATH"
     )
+
+    # SLM configuration (Phase 3)
+    slm_enabled: bool = Field(default=True, description="Enable SLM reasoning layer")
+    slm_model_path: Optional[Path] = Field(
+        default=None,
+        description="Path to GGUF model file (e.g. models/slm/qwen2.5-3b-instruct-q4_k_m.gguf)",
+        alias="SLM_MODEL_PATH"
+    )
+    slm_n_gpu_layers: int = Field(
+        default=0,
+        description="Number of layers to offload to GPU (0=CPU only, -1=all)",
+        alias="SLM_N_GPU_LAYERS"
+    )
+    slm_max_tokens: int = Field(default=4, description="Max tokens for SLM output (YES/NO)")
+    slm_context_length: int = Field(default=512, description="SLM context window size")
+
+    @property
+    def slm_model_dir(self) -> Path:
+        """Get SLM model directory."""
+        return self.model_cache_dir / "slm"
 
     @property
     def vad_model_path(self) -> Path:
@@ -103,6 +123,7 @@ class Settings(BaseSettings):
             self.reports_dir,
             self.vad_model_path,
             self.stt_model_path,
+            self.slm_model_dir,
         ]
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)

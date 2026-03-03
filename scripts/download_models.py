@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Download all required models for the proctoring system."""
 
+import argparse
 import logging
 import sys
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
-from huggingface_hub import snapshot_download
+from huggingface_hub import hf_hub_download, snapshot_download
 
 from src.core.config import settings
 
@@ -94,8 +95,70 @@ def download_phowhisper():
         return False
 
 
+def download_slm(model_size: str = "3b") -> bool:
+    """
+    Download Qwen2.5 GGUF model for SLM reasoning layer.
+
+    Args:
+        model_size: "1.5b" or "3b" (default: "3b")
+    """
+    size_map = {
+        "1.5b": {
+            "repo": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+            "filename": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        },
+        "3b": {
+            "repo": "Qwen/Qwen2.5-3B-Instruct-GGUF",
+            "filename": "qwen2.5-3b-instruct-q4_k_m.gguf",
+        },
+    }
+
+    if model_size not in size_map:
+        logger.error(f"Unknown model size: {model_size}. Choose '1.5b' or '3b'")
+        return False
+
+    info = size_map[model_size]
+    dest_dir = settings.slm_model_dir
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / info["filename"]
+
+    if dest_path.exists():
+        logger.info(f"✓ SLM model already exists: {dest_path}")
+        return True
+
+    logger.info(f"Downloading SLM: {info['repo']} / {info['filename']}")
+    logger.info(f"  Destination: {dest_path}")
+    logger.info(f"  Size: ~{'1.1GB' if model_size == '1.5b' else '2.0GB'}")
+
+    try:
+        hf_hub_download(
+            repo_id=info["repo"],
+            filename=info["filename"],
+            local_dir=str(dest_dir),
+            local_dir_use_symlinks=False,
+        )
+        logger.info(f"✓ SLM model saved to {dest_path}")
+        logger.info(f"  Set SLM_MODEL_PATH={dest_path} in .env to use it")
+        return True
+
+    except Exception as e:
+        logger.error(f"✗ Failed to download SLM model: {e}")
+        return False
+
+
 def main():
     """Main download function."""
+    parser = argparse.ArgumentParser(description="Download models for AI Proctoring System")
+    parser.add_argument("--slm", action="store_true", help="Download SLM model (Phase 3)")
+    parser.add_argument(
+        "--slm-size",
+        choices=["1.5b", "3b"],
+        default="3b",
+        help="SLM model size (default: 3b)",
+    )
+    parser.add_argument("--all", action="store_true", help="Download all models including SLM")
+    args = parser.parse_args()
+
     logger.info("=" * 60)
     logger.info("Model Download Script for AI Proctoring System")
     logger.info("=" * 60)
@@ -104,14 +167,19 @@ def main():
     settings.ensure_directories()
     logger.info(f"Model cache directory: {settings.model_cache_dir}")
 
-    # Download models
     results = []
 
-    logger.info("\n[1/2] Downloading Silero VAD...")
-    results.append(("Silero VAD", download_silero_vad()))
+    if not args.slm:
+        # Default: download base models
+        logger.info("\n[1/2] Downloading Silero VAD...")
+        results.append(("Silero VAD", download_silero_vad()))
 
-    logger.info("\n[2/2] Downloading PhoWhisper...")
-    results.append(("PhoWhisper", download_phowhisper()))
+        logger.info("\n[2/2] Downloading PhoWhisper...")
+        results.append(("PhoWhisper", download_phowhisper()))
+
+    if args.slm or args.all:
+        logger.info(f"\n[SLM] Downloading Qwen2.5-{args.slm_size.upper()}-Instruct-GGUF...")
+        results.append((f"SLM (Qwen2.5-{args.slm_size})", download_slm(args.slm_size)))
 
     # Summary
     logger.info("\n" + "=" * 60)
@@ -126,8 +194,11 @@ def main():
 
     if all_success:
         logger.info("\n✓ All models downloaded successfully!")
-        logger.info("\nYou can now start the server with:")
-        logger.info("  uvicorn src.api.main:app --reload")
+        if args.slm or args.all:
+            logger.info("\nNext: set SLM_MODEL_PATH in .env and restart the server")
+        else:
+            logger.info("\nYou can now start the server with:")
+            logger.info("  uvicorn src.api.main:app --reload")
         return 0
     else:
         logger.error("\n✗ Some models failed to download.")

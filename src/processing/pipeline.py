@@ -13,6 +13,7 @@ from src.core.session import session_manager
 from src.processing.buffer import AudioBuffer
 from src.processing.decision_engine import decision_engine
 from src.processing.embedding import EmbeddingProcessor
+from src.processing.slm import SLMProcessor
 from src.processing.stt import STTProcessor
 from src.processing.vad import VADProcessor
 from src.storage.transcript_store import TranscriptStore
@@ -23,7 +24,7 @@ MIN_CONFIDENCE = 0.5
 
 
 class AudioPipeline:
-    """Audio processing pipeline: VAD → Buffer → STT → Embedding → Decision Engine."""
+    """Audio processing pipeline: VAD → Buffer → STT → Embedding → SLM → Decision Engine."""
 
     def __init__(
         self,
@@ -31,10 +32,12 @@ class AudioPipeline:
         stt_processor: STTProcessor,
         embedding_processor: EmbeddingProcessor,
         transcript_store: TranscriptStore,
+        slm_processor: Optional[SLMProcessor] = None,
     ):
         self.vad = vad_processor
         self.stt = stt_processor
         self.embedding = embedding_processor
+        self.slm = slm_processor
         self.transcript_store = transcript_store
 
         self._should_stop: dict[str, bool] = {}
@@ -157,15 +160,35 @@ class AudioPipeline:
                     f"[{session_id[:8]}] Similarity: {similarity:.3f} — '{text[:40]}'"
                 )
 
-            # 3. Decision Engine
+            # 3. SLM reasoning (only when similarity is high enough to be worth checking)
+            slm_verdict = False
+            if (
+                self.slm is not None
+                and similarity >= settings.similarity_threshold_low
+                and session.exam_question
+            ):
+                loop = asyncio.get_event_loop()
+                slm_verdict = await loop.run_in_executor(
+                    None,
+                    self.slm.predict,
+                    session.exam_question,
+                    text,
+                )
+                logger.info(
+                    f"[{session_id[:8]}] SLM: {'YES ⚠️' if slm_verdict else 'NO'} "
+                    f"(similarity={similarity:.2f})"
+                )
+
+            # 4. Decision Engine
             state = decision_engine.process(
                 session_id=session_id,
                 text=text,
                 similarity_score=similarity,
                 timestamp=timestamp,
+                slm_verdict=slm_verdict,
             )
 
-            # 4. Sync back to session state
+            # 5. Sync back to session state
             session.suspicion_score = state["suspicion_score"]
             session.cheating_flag = state["cheating_flag"]
             session.flagged_segments_count = state["flagged_count"]

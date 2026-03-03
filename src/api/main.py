@@ -13,6 +13,7 @@ from src.core.config import settings
 from src.processing import pipeline as pipeline_module
 from src.processing.embedding import EmbeddingProcessor
 from src.processing.pipeline import AudioPipeline
+from src.processing.slm import SLMProcessor
 from src.processing.stt import STTProcessor
 from src.processing.vad import VADProcessor
 from src.storage.transcript_store import TranscriptStore
@@ -71,6 +72,28 @@ async def lifespan(app: FastAPI):
         embedding = EmbeddingProcessor(device=settings.torch_device)
         embedding.load_model()
 
+        # Initialize SLM (optional — only if enabled and model path is set)
+        slm = None
+        if settings.slm_enabled and settings.slm_model_path:
+            try:
+                slm = SLMProcessor(
+                    model_path=settings.slm_model_path,
+                    n_gpu_layers=settings.slm_n_gpu_layers,
+                    max_tokens=settings.slm_max_tokens,
+                    context_length=settings.slm_context_length,
+                )
+                slm.load_model()
+            except FileNotFoundError as e:
+                logger.warning(f"SLM model not found, running without SLM: {e}")
+                slm = None
+            except Exception as e:
+                logger.warning(f"Failed to load SLM, running without SLM: {e}")
+                slm = None
+        elif settings.slm_enabled:
+            logger.info("SLM enabled but SLM_MODEL_PATH not set — skipping SLM")
+        else:
+            logger.info("SLM disabled (SLM_ENABLED=false)")
+
         # Initialize transcript store
         transcript_store = TranscriptStore()
 
@@ -80,9 +103,11 @@ async def lifespan(app: FastAPI):
             stt_processor=stt,
             embedding_processor=embedding,
             transcript_store=transcript_store,
+            slm_processor=slm,
         )
 
-        logger.info("All models loaded successfully")
+        slm_status = f"loaded ({settings.slm_model_path.name})" if slm else "disabled/not loaded"
+        logger.info(f"All models loaded successfully (SLM: {slm_status})")
 
     except Exception as e:
         logger.error(f"Failed to load models: {e}", exc_info=True)

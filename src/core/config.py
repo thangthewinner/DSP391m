@@ -61,6 +61,23 @@ class Settings(BaseSettings):
         alias="STT_MODEL_PATH"
     )
 
+    # Speaker Verification configuration (Phase 5)
+    speaker_verification_enabled: bool = Field(
+        default=True, description="Enable speaker verification"
+    )
+    speaker_verification_threshold: float = Field(
+        default=0.75, description="Cosine similarity threshold for speaker verification"
+    )
+    verification_interval: int = Field(
+        default=300, description="Seconds between verification checks (default: 5 minutes)"
+    )
+    min_enrollment_samples: int = Field(
+        default=3, description="Minimum audio samples required for enrollment"
+    )
+    min_verification_audio_seconds: float = Field(
+        default=3.0, description="Minimum audio length (seconds) required for verification"
+    )
+
     # SLM configuration (Phase 3)
     slm_enabled: bool = Field(default=True, description="Enable SLM reasoning layer")
     slm_model_path: Optional[Path] = Field(
@@ -80,6 +97,11 @@ class Settings(BaseSettings):
     def slm_model_dir(self) -> Path:
         """Get SLM model directory."""
         return self.model_cache_dir / "slm"
+
+    @property
+    def speaker_model_dir(self) -> Path:
+        """Get speaker verification model cache directory."""
+        return self.model_cache_dir / "speaker"
 
     @property
     def vad_model_path(self) -> Path:
@@ -124,6 +146,7 @@ class Settings(BaseSettings):
             self.vad_model_path,
             self.stt_model_path,
             self.slm_model_dir,
+            self.speaker_model_dir,
         ]
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)

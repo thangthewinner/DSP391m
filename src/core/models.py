@@ -124,6 +124,7 @@ class HealthResponse(BaseModel):
     models_loaded: bool = Field(..., description="Models loaded status")
     version: str = Field(..., description="API version")
     slm_loaded: bool = Field(default=False, description="SLM reasoning model loaded")
+    verifier_loaded: bool = Field(default=False, description="Speaker verifier model loaded")
 
 
 class SessionState(BaseModel):
@@ -142,5 +143,11 @@ class SessionState(BaseModel):
     flagged_segments_count: int = 0
     # Pre-computed embedding of exam_question (set on session start)
     question_embedding: Optional[Any] = Field(default=None, exclude=True)
+
+    # Speaker verification state (Phase 5)
+    last_verification_time: Optional[datetime] = None
+    last_verification_similarity: float = 1.0
+    last_verification_failed: bool = False
+    verification_failures_count: int = 0
 
     model_config = {"arbitrary_types_allowed": True}

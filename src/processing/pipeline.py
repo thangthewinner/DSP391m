@@ -3,6 +3,8 @@
 import asyncio
 import base64
 import logging
+from collections import deque
+from datetime import datetime
 from typing import Optional
 
 import numpy as np
@@ -14,6 +16,7 @@ from src.processing.buffer import AudioBuffer
 from src.processing.decision_engine import decision_engine
 from src.processing.embedding import EmbeddingProcessor
 from src.processing.slm import SLMProcessor
+from src.processing.speaker_verification import SpeakerVerifier
 from src.processing.stt import STTProcessor
 from src.processing.vad import VADProcessor
 from src.storage.transcript_store import TranscriptStore
@@ -21,6 +24,8 @@ from src.storage.transcript_store import TranscriptStore
 logger = logging.getLogger(__name__)
 
 MIN_CONFIDENCE = 0.5
+# Keep a rolling buffer of recent audio for verification (max 30s)
+VERIFICATION_AUDIO_BUFFER_SECONDS = 30
 
 
 class AudioPipeline:
@@ -33,14 +38,18 @@ class AudioPipeline:
         embedding_processor: EmbeddingProcessor,
         transcript_store: TranscriptStore,
         slm_processor: Optional[SLMProcessor] = None,
+        speaker_verifier: Optional[SpeakerVerifier] = None,
     ):
         self.vad = vad_processor
         self.stt = stt_processor
         self.embedding = embedding_processor
         self.slm = slm_processor
+        self.verifier = speaker_verifier
         self.transcript_store = transcript_store
 
         self._should_stop: dict[str, bool] = {}
+        # Rolling audio buffer per session for verification
+        self._recent_audio: dict[str, deque] = {}
 
     async def process_session(self, session_id: str) -> None:
         """Process audio stream for a session."""
@@ -58,10 +67,21 @@ class AudioPipeline:
             sample_rate=settings.audio_sample_rate,
         )
 
+        # Init rolling audio buffer for verification
+        max_samples = int(VERIFICATION_AUDIO_BUFFER_SECONDS * settings.audio_sample_rate)
+        self._recent_audio[session_id] = deque(maxlen=max_samples)
+
         self._should_stop[session_id] = False
         chunk_count = 0
         last_transcription_time = 0.0
         timestamp = 0.0
+
+        # Start verification loop if verifier is available
+        verification_task = None
+        if self.verifier is not None and settings.speaker_verification_enabled:
+            verification_task = asyncio.create_task(
+                self._verification_loop(session_id)
+            )
 
         try:
             while not self._should_stop.get(session_id, False):
@@ -74,6 +94,10 @@ class AudioPipeline:
 
                     audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
                     audio_float = audio_array.astype(np.float32) / 32768.0
+
+                    # Accumulate audio for verification (all chunks, not just speech)
+                    if session_id in self._recent_audio:
+                        self._recent_audio[session_id].extend(audio_float.tolist())
 
                     # VAD
                     if not self.vad.process_chunk(audio_float):
@@ -99,11 +123,99 @@ class AudioPipeline:
             logger.info(f"Processing cancelled for session {session_id}")
 
         finally:
+            # Stop verification loop
+            if verification_task and not verification_task.done():
+                verification_task.cancel()
+
             # Final flush
             if buffer.is_ready():
                 await self._process_buffer(session_id, buffer.get_buffer_array(), timestamp)
 
+            # Cleanup rolling buffer
+            self._recent_audio.pop(session_id, None)
+
             logger.info(f"Processing stopped for session {session_id} ({chunk_count} chunks)")
+
+    async def _verification_loop(self, session_id: str) -> None:
+        """Periodic speaker verification running in background."""
+        logger.info(
+            f"[{session_id[:8]}] Verification loop started "
+            f"(interval={settings.verification_interval}s)"
+        )
+
+        # Wait for first interval before first check
+        await asyncio.sleep(settings.verification_interval)
+
+        while not self._should_stop.get(session_id, False):
+            try:
+                session = session_manager.get_session(session_id)
+                if not session:
+                    break
+
+                # Get recent audio for verification
+                audio_deque = self._recent_audio.get(session_id)
+                if audio_deque is None:
+                    await asyncio.sleep(settings.verification_interval)
+                    continue
+
+                min_samples = int(
+                    settings.min_verification_audio_seconds * settings.audio_sample_rate
+                )
+                if len(audio_deque) < min_samples:
+                    logger.debug(
+                        f"[{session_id[:8]}] Not enough audio for verification "
+                        f"({len(audio_deque)} < {min_samples} samples)"
+                    )
+                    await asyncio.sleep(settings.verification_interval)
+                    continue
+
+                audio = np.array(list(audio_deque), dtype=np.float32)
+
+                # Run verification in executor (blocking)
+                loop = asyncio.get_event_loop()
+                passed, similarity = await loop.run_in_executor(
+                    None,
+                    self.verifier.verify,
+                    session.student_id,
+                    audio,
+                    settings.audio_sample_rate,
+                )
+
+                # Update session state
+                session.last_verification_time = datetime.now()
+                session.last_verification_similarity = similarity
+
+                if not passed:
+                    session.last_verification_failed = True
+                    session.verification_failures_count += 1
+
+                    # Feed into Decision Engine
+                    state = decision_engine.process(
+                        session_id=session_id,
+                        text="[speaker verification failed]",
+                        similarity_score=0.0,
+                        verification_failed=True,
+                    )
+                    session.suspicion_score = state["suspicion_score"]
+                    session.cheating_flag = state["cheating_flag"]
+                    session.flagged_segments_count = state["flagged_count"]
+
+                    logger.warning(
+                        f"[{session_id[:8]}] Verification FAILED "
+                        f"(similarity={similarity:.3f}, failures={session.verification_failures_count})"
+                    )
+                else:
+                    session.last_verification_failed = False
+                    logger.info(
+                        f"[{session_id[:8]}] Verification passed (similarity={similarity:.3f})"
+                    )
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in verification loop: {e}", exc_info=True)
+
+            await asyncio.sleep(settings.verification_interval)
 
     async def _process_buffer(
         self,

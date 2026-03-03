@@ -23,10 +23,12 @@ async def health_check():
         and p.stt.model is not None
     )
     slm_loaded = p is not None and p.slm is not None
+    verifier_loaded = p is not None and p.verifier is not None
 
     return HealthResponse(
         status="healthy" if models_loaded else "initializing",
         models_loaded=models_loaded,
         version=__version__,
         slm_loaded=slm_loaded,
+        verifier_loaded=verifier_loaded,
     )

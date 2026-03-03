@@ -14,6 +14,7 @@ from src.processing import pipeline as pipeline_module
 from src.processing.embedding import EmbeddingProcessor
 from src.processing.pipeline import AudioPipeline
 from src.processing.slm import SLMProcessor
+from src.processing.speaker_verification import SpeakerVerifier
 from src.processing.stt import STTProcessor
 from src.processing.vad import VADProcessor
 from src.storage.transcript_store import TranscriptStore
@@ -94,6 +95,22 @@ async def lifespan(app: FastAPI):
         else:
             logger.info("SLM disabled (SLM_ENABLED=false)")
 
+        # Initialize Speaker Verifier (Phase 5)
+        verifier = None
+        if settings.speaker_verification_enabled:
+            try:
+                verifier = SpeakerVerifier(
+                    enrollment_dir=settings.enrollment_dir,
+                    threshold=settings.speaker_verification_threshold,
+                    device=settings.torch_device,
+                )
+                verifier.load_model()
+            except Exception as e:
+                logger.warning(f"Failed to load Speaker Verifier, running without it: {e}")
+                verifier = None
+        else:
+            logger.info("Speaker verification disabled (SPEAKER_VERIFICATION_ENABLED=false)")
+
         # Initialize transcript store
         transcript_store = TranscriptStore()
 
@@ -104,10 +121,14 @@ async def lifespan(app: FastAPI):
             embedding_processor=embedding,
             transcript_store=transcript_store,
             slm_processor=slm,
+            speaker_verifier=verifier,
         )
 
         slm_status = f"loaded ({settings.slm_model_path.name})" if slm else "disabled/not loaded"
-        logger.info(f"All models loaded successfully (SLM: {slm_status})")
+        verifier_status = "loaded" if verifier else "disabled/not loaded"
+        logger.info(
+            f"All models loaded successfully (SLM: {slm_status}, Verifier: {verifier_status})"
+        )
 
     except Exception as e:
         logger.error(f"Failed to load models: {e}", exc_info=True)

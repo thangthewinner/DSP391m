@@ -106,8 +106,19 @@ async def audio_stream_handler(websocket: WebSocket, session_id: str):
                             "type": "cheating_alert",
                             "suspicion_score": session.suspicion_score,
                             "message": "⚠️ Phát hiện hành vi gian lận!",
-                            "timestamp": session.suspicion_score,
+                            "timestamp": message.timestamp,
                         })
+
+                    # Push verification alert when verification fails
+                    if session.last_verification_failed:
+                        await websocket.send_json({
+                            "type": "verification_alert",
+                            "similarity": session.last_verification_similarity,
+                            "failures_count": session.verification_failures_count,
+                            "message": "⚠️ Xác minh danh tính thất bại!",
+                            "timestamp": message.timestamp,
+                        })
+                        session.last_verification_failed = False  # reset after push
 
                 except asyncio.QueueFull:
                     logger.warning(f"Audio queue full for session {session_id}")

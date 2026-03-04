@@ -1,183 +1,121 @@
-# DSP391m — AI Exam Proctoring System
+# AI Exam Proctoring System
 
-Real-time verbal cheating detection for online exams using Vietnamese speech recognition.
+Real-time verbal cheating detection for online exams. Captures microphone audio, transcribes Vietnamese speech, and flags semantically suspicious answers using a multi-layer AI pipeline.
+
+**Stack:** FastAPI · Streamlit · Silero VAD · PhoWhisper · Vietnamese SBERT · Qwen2.5-3B · ECAPA-TDNN · NeMo Sortformer
+
+---
+
+## Overview
+
+| Layer | Model | Purpose |
+|---|---|---|
+| VAD | Silero VAD v4 | Filter silence |
+| STT | PhoWhisper-small (CTranslate2) | Vietnamese speech → text |
+| Embedding | Vietnamese SBERT | Semantic similarity to exam content |
+| SLM | Qwen2.5-3B-Instruct (GGUF) | Confirm cheating via reasoning |
+| Speaker ID | SpeechBrain ECAPA-TDNN | Verify student identity |
+| Diarization | NeMo Streaming Sortformer | Detect multiple speakers |
+| Decision | Suspicion score engine | Decay + threshold scoring |
+
+Audio flows: `Browser mic → WebSocket → VAD → STT → Embedding → SLM → Decision Engine`
+
+---
+
+## Setup & Run
+
+**Requirements:** Python 3.11, `uv`
+
+```bash
+# 1. Install dependencies
+uv sync
+
+# 2. Configure
+cp .env.example .env   # edit TORCH_DEVICE, enable/disable modules
+
+# 3. Download models
+uv run python scripts/download_models.py --all
+# or selectively: --stt --slm --diarization
+
+# 4. Start backend
+uv run uvicorn src.api.main:app --reload
+
+# 5. Start frontend (new terminal)
+uv run streamlit run frontend/app.py
+```
+
+Open `http://localhost:8501` → select exam → click **Bắt đầu giám sát** → allow mic.
+
+### Key `.env` options
+
+```env
+TORCH_DEVICE=cpu              # or cuda
+SLM_ENABLED=true
+SPEAKER_VERIFICATION_ENABLED=true
+DIARIZATION_ENABLED=true
+DIARIZATION_MODEL_PATH=./models/diarization/diar_streaming_sortformer_4spk-v2.nemo
+```
+
+---
 
 ## Architecture
 
 ```
-Microphone → WebSocket → VAD → Buffer → STT → Decision Engine → Alert
+Browser
+  └─ JS getUserMedia → PCM int16 → base64 JSON
+       └─ WebSocket /ws/audio/{session_id}
+            └─ FastAPI AudioPipeline
+                 ├─ VAD (Silero)          — drop silence
+                 ├─ AudioBuffer (10s)     — sliding window
+                 ├─ STT (PhoWhisper)      — transcribe
+                 ├─ Embedding (SBERT)     — similarity score
+                 ├─ SLM (Qwen2.5)        — reasoning verdict
+                 ├─ Speaker Verifier      — identity check (async loop)
+                 ├─ Diarization (NeMo)    — overlap detection
+                 └─ Decision Engine       — suspicion score + decay
+                      └─ WebSocket push → Streamlit log panel
 ```
 
-**Phase 1 (done):** Audio pipeline — VAD + Buffer + STT  
-**Phase 2:** Text embedding similarity (Vietnamese SBERT)  
-**Phase 3:** SLM reasoning (Qwen2.5-7B)  
-**Phase 4:** Decision engine with suspicion scoring  
-**Phase 5:** Speaker verification (ECAPA-TDNN)  
-**Phase 6:** Speaker diarization (pyannote)
+**Suspicion scoring:**
+- Similarity ≥ 0.75 + SLM=YES → +3 pts
+- Similarity ≥ 0.60 → +1 pt
+- Speaker overlap → +1 pt
+- Verification fail → +2 pts
+- Score decays 10%/chunk; threshold = 10 → cheating flag
 
-## Requirements
-
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/) package manager
-- ~3GB disk space for models
-
-## Setup
-
-### 1. Install dependencies
-
-```bash
-uv sync
-```
-
-For GPU (CUDA 12.6):
-```bash
-uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-```
-
-### 2. Configure environment
-
-```bash
-cp .env.example .env
-# Edit .env if needed (default: CPU mode)
-```
-
-### 3. Download & prepare models
-
-```bash
-# Download PhoWhisper (926MB)
-uv run python scripts/download_models.py
-
-# Convert to CTranslate2 format (required by faster-whisper)
-uv run ct2-transformers-converter \
-  --model models/stt/phowhisper-small \
-  --output_dir models/stt/phowhisper-small-ct2 \
-  --quantization int8 \
-  --copy_files tokenizer.json preprocessor_config.json
-```
-
-> Silero VAD is cached automatically by `torch.hub` — no extra step needed.
-
-### 4. Start server
-
-```bash
-uv run uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-Server ready when you see:
-```
-✓ Silero VAD model loaded successfully
-✓ PhoWhisper model loaded successfully
-Application startup complete.
-```
-
-## API
-
-Interactive docs: **http://localhost:8000/docs**
-
-### Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check |
-| `POST` | `/api/exam/start` | Start exam session |
-| `POST` | `/api/exam/stop/{session_id}` | Stop session |
-| `GET` | `/api/exam/status/{session_id}` | Session status |
-| `GET` | `/api/exam/report/{session_id}` | Full report + transcript |
-| `GET` | `/api/exam/sessions` | List active sessions |
-| `DELETE` | `/api/exam/session/{session_id}` | Delete session |
-| `WS` | `/ws/audio/{session_id}` | Audio stream |
-
-### Quick test
-
-```bash
-# Start a session
-curl -X POST http://localhost:8000/api/exam/start \
-  -H "Content-Type: application/json" \
-  -d '{"student_id": "student_001", "exam_id": "exam_001"}'
-
-# WebSocket audio format
-{
-  "type": "audio_chunk",
-  "data": "<base64 PCM int16>",
-  "sample_rate": 16000,
-  "timestamp": 1.0
-}
-```
+---
 
 ## Project Structure
 
 ```
-src/
-├── api/
-│   ├── main.py              # FastAPI app, model loading
-│   ├── routes/
-│   │   ├── exam.py          # Session management endpoints
-│   │   ├── health.py        # Health check
-│   │   └── enrollment.py    # Speaker enrollment (Phase 5 stub)
-│   └── websocket/
-│       └── audio_handler.py # WebSocket audio stream
-├── core/
-│   ├── config.py            # Settings (pydantic-settings)
-│   ├── models.py            # Pydantic data models
-│   └── session.py           # In-memory session manager
-├── processing/
-│   ├── vad.py               # Silero VAD
-│   ├── stt.py               # PhoWhisper (faster-whisper)
-│   ├── buffer.py            # Sliding window audio buffer
-│   └── pipeline.py          # VAD → Buffer → STT orchestration
-└── storage/
-    └── transcript_store.py  # Async JSON transcript storage
-
-models/
-├── stt/phowhisper-small/        # PyTorch source model
-└── stt/phowhisper-small-ct2/    # CTranslate2 model (used at runtime)
-
-storage/transcripts/             # Session transcripts (JSON)
+.
+├── frontend/
+│   └── app.py              # Streamlit UI (mic capture, log panel, report)
+├── src/
+│   ├── api/
+│   │   ├── main.py         # FastAPI app + lifespan (model loading)
+│   │   ├── routes/         # REST endpoints (start/stop/status/report)
+│   │   └── websocket/
+│   │       └── audio_handler.py  # WebSocket audio stream handler
+│   ├── core/
+│   │   ├── config.py       # Pydantic settings (from .env)
+│   │   ├── models.py       # Pydantic data models
+│   │   └── session.py      # In-memory session manager
+│   └── processing/
+│       ├── pipeline.py     # Orchestrates full audio pipeline
+│       ├── vad.py          # Silero VAD (frame-by-frame)
+│       ├── buffer.py       # Sliding audio buffer
+│       ├── stt.py          # PhoWhisper transcription
+│       ├── embedding.py    # Vietnamese SBERT similarity
+│       ├── slm.py          # Qwen2.5 GGUF reasoning
+│       ├── speaker_verification.py  # ECAPA-TDNN identity
+│       ├── overlap_detector.py      # NeMo Sortformer diarization
+│       └── decision_engine.py       # Scoring + decay logic
+├── exams/                  # Exam content (.txt) for semantic matching
+├── models/                 # Downloaded model weights (gitignored)
+├── storage/                # Transcripts + enrollments (gitignored)
+├── scripts/
+│   ├── download_models.py  # Download all models from HuggingFace
+│   └── convert_phowhisper.py  # Convert to CTranslate2 format
+└── .env                    # Runtime configuration
 ```
-
-## Configuration (`.env`)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TORCH_DEVICE` | `cpu` | `cpu` or `cuda` |
-| `STT_MODEL_PATH` | *(auto)* | Override CT2 model path |
-| `VAD_THRESHOLD` | `0.5` | Speech detection sensitivity |
-| `AUDIO_SAMPLE_RATE` | `16000` | Hz |
-| `BUFFER_SIZE` | `10.0` | Seconds of audio to buffer |
-| `STORAGE_ROOT` | `./storage` | Transcript storage directory |
-
-## GPU Setup
-
-If you have an NVIDIA GPU:
-
-```bash
-# 1. Install PyTorch with CUDA
-uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-
-# 2. Convert model with float16
-uv run ct2-transformers-converter \
-  --model models/stt/phowhisper-small \
-  --output_dir models/stt/phowhisper-small-ct2-gpu \
-  --quantization float16
-
-# 3. Update .env
-TORCH_DEVICE=cuda
-STT_MODEL_PATH=./models/stt/phowhisper-small-ct2-gpu
-```
-
-## Running Tests
-
-```bash
-uv run pytest tests/ -v
-```
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|-----------|
-| API | FastAPI + WebSocket |
-| VAD | Silero VAD v4 |
-| STT | PhoWhisper-small (faster-whisper) |
-| Embedding | Vietnamese SBERT *(Phase 2)* |
-| SLM | Qwen2.5-7B-Instruct *(Phase 3)* |
-| Speaker ID | ECAPA-TDNN *(Phase 5)* |

@@ -59,6 +59,9 @@ class VADProcessor:
         """
         Process audio chunk and detect speech.
 
+        Silero VAD requires exactly 512 samples per frame at 16kHz.
+        We split the chunk into frames and return True if any frame has speech.
+
         Args:
             audio: Audio array (mono, sample_rate Hz)
 
@@ -68,22 +71,34 @@ class VADProcessor:
         if self.model is None:
             raise RuntimeError("VAD model not loaded. Call load_model() first.")
 
+        # Silero VAD v4 requires exactly 512 samples at 16kHz (or 256 at 8kHz)
+        frame_size = 512 if self.sample_rate == 16000 else 256
+
         try:
-            # Convert to torch tensor
-            audio_tensor = torch.from_numpy(audio).float()
+            n = len(audio)
+            if n < frame_size:
+                # Too short — pad and process as single frame
+                padded = np.zeros(frame_size, dtype=np.float32)
+                padded[:n] = audio
+                frames = [padded]
+            else:
+                # Split into non-overlapping frames; drop the last incomplete frame
+                num_frames = n // frame_size
+                frames = [audio[i * frame_size:(i + 1) * frame_size] for i in range(num_frames)]
 
-            # Get speech probability
+            max_prob = 0.0
             with torch.no_grad():
-                speech_prob = self.model(audio_tensor, self.sample_rate).item()
+                for frame in frames:
+                    tensor = torch.from_numpy(frame).float()
+                    prob = self.model(tensor, self.sample_rate).item()
+                    if prob > max_prob:
+                        max_prob = prob
 
-            # Check against threshold
-            is_speech = speech_prob >= self.threshold
-
+            is_speech = max_prob >= self.threshold
             logger.debug(
-                f"VAD: speech_prob={speech_prob:.3f}, threshold={self.threshold}, "
-                f"is_speech={is_speech}"
+                "VAD: max_prob=%.3f over %d frames, threshold=%.2f, is_speech=%s",
+                max_prob, len(frames), self.threshold, is_speech,
             )
-
             return is_speech
 
         except Exception as e:

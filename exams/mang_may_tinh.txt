@@ -1,0 +1,29 @@
+# Tên môn: Mạng Máy Tính
+# Mã đề: MMT001
+# Thời gian: 75 phút
+# Mô tả: TCP/IP, OSI model, routing, bảo mật mạng
+
+Câu 1 (2 điểm):
+Mô tả mô hình OSI 7 tầng. Chức năng của mỗi tầng là gì?
+So sánh mô hình OSI và TCP/IP. Tầng nào của OSI tương ứng với tầng nào của TCP/IP?
+Giải thích quá trình đóng gói dữ liệu (encapsulation) khi gửi một gói tin.
+
+Câu 2 (2 điểm):
+Địa chỉ IP lớp C có dạng gì? Phân biệt địa chỉ IP public và private.
+Cho mạng 192.168.1.0/24. Chia thành 4 subnet bằng nhau.
+Tính subnet mask, network address, broadcast address, và dải địa chỉ host cho mỗi subnet.
+
+Câu 3 (2 điểm):
+So sánh TCP và UDP. Khi nào dùng TCP, khi nào dùng UDP?
+Giải thích quá trình bắt tay 3 bước (3-way handshake) của TCP.
+Giải thích cơ chế kiểm soát tắc nghẽn (congestion control) trong TCP.
+
+Câu 4 (2 điểm):
+Giải thích nguyên lý hoạt động của các giao thức định tuyến: RIP, OSPF, BGP.
+So sánh định tuyến tĩnh (static routing) và định tuyến động (dynamic routing).
+Khi nào nên dùng OSPF thay vì RIP?
+
+Câu 5 (2 điểm):
+Giải thích các loại tấn công mạng: DDoS, Man-in-the-Middle, SQL Injection, ARP Spoofing.
+Các biện pháp phòng chống tấn công DDoS là gì?
+Giải thích cách hoạt động của HTTPS và tại sao nó an toàn hơn HTTP.

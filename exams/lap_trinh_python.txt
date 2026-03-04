@@ -1,0 +1,29 @@
+# Tên môn: Lập Trình Python
+# Mã đề: PY001
+# Thời gian: 60 phút
+# Mô tả: OOP, functional programming, data structures
+
+Câu 1 (2 điểm):
+Giải thích sự khác nhau giữa list, tuple, set và dictionary trong Python.
+Viết code minh họa cách sử dụng list comprehension để lọc các số chẵn từ một list.
+
+Câu 2 (2 điểm):
+Viết một class BankAccount với các thuộc tính: account_number, balance, owner.
+Cài đặt các phương thức: deposit(), withdraw(), get_balance().
+Sử dụng decorator @property cho thuộc tính balance.
+Xử lý ngoại lệ khi rút tiền vượt quá số dư.
+
+Câu 3 (2 điểm):
+Giải thích khái niệm decorator trong Python.
+Viết một decorator @timer để đo thời gian thực thi của một hàm.
+Viết một decorator @retry(n) để thử lại hàm tối đa n lần nếu gặp exception.
+
+Câu 4 (2 điểm):
+Viết hàm sử dụng generator để tạo dãy Fibonacci vô hạn.
+Sử dụng hàm lambda và map/filter để xử lý danh sách sinh viên.
+Giải thích sự khác nhau giữa *args và **kwargs.
+
+Câu 5 (2 điểm):
+Viết chương trình đọc file CSV chứa dữ liệu sinh viên (tên, điểm).
+Tính điểm trung bình, tìm sinh viên có điểm cao nhất và thấp nhất.
+Ghi kết quả ra file JSON sử dụng thư viện json.

@@ -154,5 +154,9 @@ class SessionState(BaseModel):
     # Overlap detection state (Phase 6)
     last_overlap_detected: bool = False
     overlap_count: int = 0
+    last_diarization_result: Optional[dict] = None  # {num_speakers, segments, confidence}
+
+    # Latest STT result to push to frontend (reset after send)
+    last_transcript: Optional[dict] = None  # {text, confidence, similarity, timestamp}
 
     model_config = {"arbitrary_types_allowed": True}

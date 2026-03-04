@@ -261,6 +261,14 @@ class AudioPipeline:
                 f"[{session_id[:8]}] STT: '{text[:60]}' (conf={confidence:.2f})"
             )
 
+            # Push STT result to frontend via WebSocket
+            session.last_transcript = {
+                "text": text,
+                "confidence": confidence,
+                "timestamp": timestamp,
+                "similarity": 0.0,  # updated below after embedding
+            }
+
             # 2. Embedding similarity (only if exam_question is set)
             similarity = 0.0
             if session.question_embedding is not None and text:
@@ -274,6 +282,9 @@ class AudioPipeline:
                 logger.info(
                     f"[{session_id[:8]}] Similarity: {similarity:.3f} — '{text[:40]}'"
                 )
+                # Update similarity in transcript push
+                if session.last_transcript:
+                    session.last_transcript["similarity"] = similarity
 
             # 3. SLM reasoning (only when similarity is high enough to be worth checking)
             slm_verdict = False
@@ -305,12 +316,22 @@ class AudioPipeline:
                     if len(audio_deque) >= min_samples:
                         audio_buffer = np.array(list(audio_deque), dtype=np.float32)
                         loop = asyncio.get_event_loop()
-                        overlap_detected, overlap_conf = await loop.run_in_executor(
+                        overlap_detected, overlap_conf, diar_segments = await loop.run_in_executor(
                             None,
                             self.overlap_detector.detect,
                             audio_buffer,
                             settings.audio_sample_rate,
                         )
+                        # Always store latest diarization result for UI display
+                        unique_spk = list({s["speaker"] for s in diar_segments})
+                        session.last_diarization_result = {
+                            "num_speakers": len(unique_spk),
+                            "speakers": unique_spk,
+                            "segments": diar_segments,
+                            "confidence": overlap_conf,
+                            "overlap": overlap_detected,
+                            "audio_duration": len(audio_buffer) / settings.audio_sample_rate,
+                        }
                         if overlap_detected:
                             session.last_overlap_detected = True
                             session.overlap_count += 1

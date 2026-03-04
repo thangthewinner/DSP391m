@@ -1,0 +1,30 @@
+# Tên môn: Cơ Sở Dữ Liệu
+# Mã đề: CSDB001
+# Thời gian: 75 phút
+# Mô tả: SQL, thiết kế CSDL, chuẩn hóa, tối ưu hóa
+
+Câu 1 (2 điểm):
+Cho lược đồ CSDL: SinhVien(MaSV, HoTen, NgaySinh, MaKhoa), Khoa(MaKhoa, TenKhoa, TruongKhoa).
+Viết câu lệnh SQL để:
+a) Liệt kê tất cả sinh viên cùng tên khoa của họ (dùng INNER JOIN)
+b) Tìm các khoa không có sinh viên nào (dùng LEFT JOIN hoặc NOT EXISTS)
+c) Đếm số sinh viên trong mỗi khoa, sắp xếp giảm dần
+
+Câu 2 (2 điểm):
+Giải thích các dạng chuẩn hóa 1NF, 2NF, 3NF với ví dụ cụ thể.
+Cho quan hệ R(A, B, C, D) với các phụ thuộc hàm: A→B, B→C, A→D.
+Hãy chuẩn hóa R về dạng 3NF.
+
+Câu 3 (2 điểm):
+Giải thích sự khác nhau giữa clustered index và non-clustered index.
+Khi nào nên tạo index? Khi nào index có thể làm chậm hiệu năng?
+Viết câu lệnh tạo composite index cho bảng Orders(OrderID, CustomerID, OrderDate).
+
+Câu 4 (2 điểm):
+Giải thích các thuộc tính ACID trong transaction.
+Viết một transaction SQL để chuyển tiền giữa hai tài khoản ngân hàng.
+Xử lý rollback khi có lỗi xảy ra.
+
+Câu 5 (2 điểm):
+So sánh SQL và NoSQL. Khi nào nên dùng MongoDB thay vì PostgreSQL?
+Thiết kế schema MongoDB cho hệ thống blog với posts, comments, users.

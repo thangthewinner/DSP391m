@@ -130,6 +130,33 @@ async def audio_stream_handler(websocket: WebSocket, session_id: str):
                         })
                         session.last_overlap_detected = False  # reset after push
 
+                    # Push STT transcript to frontend
+                    if session.last_transcript is not None:
+                        tr = session.last_transcript
+                        await websocket.send_json({
+                            "type": "transcript_log",
+                            "text": tr["text"],
+                            "confidence": tr["confidence"],
+                            "similarity": tr["similarity"],
+                            "timestamp": tr["timestamp"],
+                        })
+                        session.last_transcript = None
+
+                    # Push diarization log whenever a new result is available
+                    if session.last_diarization_result is not None:
+                        result = session.last_diarization_result
+                        await websocket.send_json({
+                            "type": "diarization_log",
+                            "num_speakers": result["num_speakers"],
+                            "speakers": result["speakers"],
+                            "segments": result["segments"],
+                            "confidence": result["confidence"],
+                            "overlap": result["overlap"],
+                            "audio_duration": result["audio_duration"],
+                            "timestamp": message.timestamp,
+                        })
+                        session.last_diarization_result = None  # reset after push
+
                 except asyncio.QueueFull:
                     logger.warning(f"Audio queue full for session {session_id}")
                     error_response = ErrorResponse(

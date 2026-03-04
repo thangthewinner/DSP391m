@@ -85,7 +85,7 @@ class OverlapDetector:
         self,
         audio: np.ndarray,
         sample_rate: int = 16000,
-    ) -> tuple[bool, float]:
+    ) -> tuple[bool, float, list[dict]]:
         """
         Detect if multiple speakers are present in the audio.
 
@@ -94,9 +94,10 @@ class OverlapDetector:
             sample_rate: Audio sample rate (must be 16000)
 
         Returns:
-            (overlap_detected, confidence)
+            (overlap_detected, confidence, segments)
             overlap_detected = True if 2+ speakers found
             confidence = 0.0-1.0 (normalized speaker count)
+            segments = list of {speaker, start, end} dicts
         """
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
@@ -108,9 +109,16 @@ class OverlapDetector:
                 len(audio) / sample_rate,
                 self.min_audio_seconds,
             )
-            return False, 0.0
+            return False, 0.0, []
 
         try:
+            audio_duration = len(audio) / sample_rate
+            logger.debug(
+                "Running diarization on %.1fs audio buffer (%d samples)",
+                audio_duration,
+                len(audio),
+            )
+
             predicted_segments = self.model.diarize(
                 audio=[audio],
                 batch_size=1,
@@ -118,34 +126,91 @@ class OverlapDetector:
             )
 
             if not predicted_segments or not predicted_segments[0]:
-                return False, 0.0
+                logger.debug("Diarization returned no segments")
+                return False, 0.0, []
 
-            # Count unique speakers in the output
+            # Parse segments and collect unique speakers
             unique_speakers: set[str] = set()
+            parsed_segments: list[dict] = []
+
             for seg in predicted_segments[0]:
                 if isinstance(seg, dict):
-                    speaker = seg.get("speaker", seg.get("label", ""))
+                    speaker = str(seg.get("speaker", seg.get("label", "")))
+                    try:
+                        start = float(seg.get("start", seg.get("start_time", 0.0)))
+                        end = float(seg.get("end", seg.get("end_time", 0.0)))
+                    except (TypeError, ValueError):
+                        start, end = 0.0, 0.0
+                elif isinstance(seg, (list, tuple)) and len(seg) >= 3:
+                    # (start, end, speaker) or (speaker, start, end)
+                    try:
+                        start = float(seg[0])
+                        end = float(seg[1])
+                        speaker = str(seg[2])
+                    except (TypeError, ValueError):
+                        try:
+                            speaker = str(seg[0])
+                            start = float(seg[1])
+                            end = float(seg[2])
+                        except (TypeError, ValueError):
+                            continue
                 else:
-                    # Segment may be a string like "speaker_0 0.0 5.0"
-                    speaker = str(seg).split()[0] if seg else ""
+                    # String format: "speaker_0 0.00 5.00" or "0.00 5.00 speaker_0"
+                    parts = str(seg).split() if seg else []
+                    if len(parts) < 3:
+                        continue
+                    # Try "speaker start end" format first
+                    try:
+                        float(parts[0])  # if first token is a number → "start end speaker"
+                        start = float(parts[0])
+                        end = float(parts[1])
+                        speaker = parts[2]
+                    except ValueError:
+                        # First token is speaker name → "speaker start end"
+                        speaker = parts[0]
+                        try:
+                            start = float(parts[1])
+                            end = float(parts[2])
+                        except (ValueError, IndexError):
+                            start, end = 0.0, 0.0
+
                 if speaker:
                     unique_speakers.add(speaker)
+                    parsed_segments.append({"speaker": speaker, "start": start, "end": end})
 
             num_speakers = len(unique_speakers)
             overlap_detected = num_speakers >= 2
-
-            # Confidence: 0 for 1 speaker, scales up with more speakers
             confidence = min(1.0, (num_speakers - 1) / 3.0) if num_speakers >= 2 else 0.0
 
+            # Detailed segment log
+            logger.info(
+                "[Diarization] %.1fs audio → %d speaker(s) detected: %s",
+                audio_duration,
+                num_speakers,
+                ", ".join(sorted(unique_speakers)) if unique_speakers else "none",
+            )
+            for seg in parsed_segments:
+                logger.debug(
+                    "  [%s] %.2fs → %.2fs (%.1fs)",
+                    seg["speaker"],
+                    seg["start"],
+                    seg["end"],
+                    seg["end"] - seg["start"],
+                )
+
             if overlap_detected:
-                logger.info(
-                    "Overlap detected: %d speakers (conf=%.2f)",
+                logger.warning(
+                    "[Diarization] OVERLAP DETECTED — %d speakers, conf=%.2f",
                     num_speakers,
                     confidence,
                 )
+            else:
+                logger.info(
+                    "[Diarization] Single speaker — no overlap (conf=0.00)"
+                )
 
-            return overlap_detected, confidence
+            return overlap_detected, confidence, parsed_segments
 
         except Exception as e:  # noqa: BLE001  # NeMo can raise various runtime errors
             logger.warning("Diarization failed, defaulting to no overlap: %s", e)
-            return False, 0.0
+            return False, 0.0, []

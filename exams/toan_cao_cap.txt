@@ -1,0 +1,31 @@
+# Tên môn: Toán Cao Cấp
+# Mã đề: TOAN001
+# Thời gian: 90 phút
+# Mô tả: Giải tích, đại số tuyến tính, phương trình vi phân
+
+Câu 1 (2 điểm):
+Tính đạo hàm của các hàm số sau:
+a) f(x) = x^3 + 2x^2 - 5x + 1
+b) g(x) = sin(x) * e^(2x)
+c) h(x) = ln(x^2 + 1) / (x - 1)
+
+Câu 2 (2 điểm):
+Giải phương trình vi phân sau với điều kiện ban đầu đã cho:
+a) dy/dx = 2xy,  y(0) = 1
+b) y'' - 3y' + 2y = 0,  y(0) = 1, y'(0) = 0
+
+Câu 3 (2 điểm):
+Tính các tích phân sau:
+a) ∫(0→1) x^2 * e^x dx
+b) ∫ x * sin(x) dx
+c) ∫(1→e) ln(x) / x dx
+
+Câu 4 (2 điểm):
+Cho ma trận A = [[1, 2, 3], [0, 1, 4], [5, 6, 0]].
+a) Tính định thức det(A)
+b) Tìm ma trận nghịch đảo A^(-1) nếu tồn tại
+c) Giải hệ phương trình Ax = b với b = [1, 2, 3]^T
+
+Câu 5 (2 điểm):
+Tìm cực trị của hàm số f(x, y) = x^2 + y^2 - 2x - 4y + 5.
+Xác định đây là cực đại hay cực tiểu và tính giá trị cực trị.

@@ -46,7 +46,6 @@ class StatusUpdateResponse(WebSocketResponse):
     """Status update response."""
 
     type: str = Field(default="status_update")
-    suspicion_score: float = Field(default=0.0, description="Current suspicion score")
     cheating_flag: bool = Field(default=False, description="Cheating detected flag")
 
 
@@ -107,9 +106,7 @@ class ExamStatusResponse(BaseModel):
 
     session_id: str = Field(..., description="Session identifier")
     status: SessionStatus = Field(..., description="Session status")
-    current_suspicion_score: float = Field(default=0.0, description="Current suspicion score")
     cheating_flag: bool = Field(default=False, description="Cheating detected")
-    flagged_segments_count: int = Field(default=0, description="Number of flagged segments")
     elapsed_time_seconds: float = Field(..., description="Elapsed time in seconds")
     last_verification_time: Optional[datetime] = Field(
         None, description="Last verification time"
@@ -138,10 +135,8 @@ class SessionState(BaseModel):
     status: SessionStatus
     started_at: datetime
     ended_at: Optional[datetime] = None
-    suspicion_score: float = 0.0
     cheating_flag: bool = False
     transcript_segments: list[TranscriptSegment] = Field(default_factory=list)
-    flagged_segments_count: int = 0
     # Pre-computed embedding of exam_question (set on session start)
     question_embedding: Optional[Any] = Field(default=None, exclude=True)
 
@@ -158,5 +153,8 @@ class SessionState(BaseModel):
 
     # Latest STT result to push to frontend (reset after send)
     last_transcript: Optional[dict] = None  # {text, confidence, similarity, timestamp}
+
+    # SLM warning — set when SLM confirms related content (reset after send)
+    last_slm_alert: Optional[dict] = None  # {text, timestamp, similarity}
 
     model_config = {"arbitrary_types_allowed": True}

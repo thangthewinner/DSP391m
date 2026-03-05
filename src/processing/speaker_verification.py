@@ -4,9 +4,9 @@ Speaker Verification — Phase 5.
 Uses SpeechBrain ECAPA-TDNN to verify speaker identity during exam.
 
 Flow:
-    Enrollment: 3-5 audio samples → average embedding → save to disk
-    Verification (every N minutes): current audio → embedding → cosine similarity
-    similarity < threshold → verification_failed → +3pt Decision Engine
+    Enrollment: audio sample → embedding → save to disk
+    Verification (periodic): current audio → embedding → cosine similarity
+    similarity < threshold → verification_failed → fail ≥ 3 → cheating_flag
 """
 
 import logging

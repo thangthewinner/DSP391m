@@ -1,4 +1,16 @@
-"""Audio processing pipeline orchestration."""
+"""
+Audio processing pipeline orchestration.
+
+Flow (correct order):
+    Audio chunks → VAD → rolling buffer (_recent_audio)
+        ↓
+    _diarization_loop (sliding window 15s, step 7.5s):
+        Diarization → identify exam taker (verification embedding or dominant)
+        → extract audio for ALL speakers
+        → STT each speaker → Embedding → SLM
+        → Jaccard dedup (50% window overlap → prevent duplicate alerts)
+        → flag cheating if SLM detects exam-related content
+"""
 
 import asyncio
 import base64
@@ -13,7 +25,7 @@ from src.core.config import settings
 from src.core.models import TranscriptSegment
 from src.core.session import session_manager
 from src.processing.buffer import AudioBuffer
-from src.processing.decision_engine import decision_engine
+
 from src.processing.embedding import EmbeddingProcessor
 from src.processing.overlap_detector import OverlapDetector
 from src.processing.slm import SLMProcessor
@@ -30,7 +42,17 @@ VERIFICATION_AUDIO_BUFFER_SECONDS = 30
 
 
 class AudioPipeline:
-    """Audio processing pipeline: VAD → Buffer → STT → Embedding → SLM → Diarization → Decision Engine."""
+    """
+    Audio processing pipeline.
+
+    When diarization is enabled (default):
+        Audio → VAD → rolling buffer → Diarization (window=15s, step=7.5s)
+            → identify exam taker (enrollment embedding or dominant-by-time)
+            → STT all speakers → Embedding → SLM → alert if related
+
+    When diarization is disabled (fallback):
+        Audio → VAD → buffer → STT (every 5s) → Embedding → SLM → alert
+    """
 
     def __init__(
         self,
@@ -51,8 +73,10 @@ class AudioPipeline:
         self.transcript_store = transcript_store
 
         self._should_stop: dict[str, bool] = {}
-        # Rolling audio buffer per session for verification
+        # Rolling audio buffer per session for verification + diarization
         self._recent_audio: dict[str, deque] = {}
+        # Dedup cache: session_id -> {speaker -> (last_text, last_timestamp)}
+        self._stt_dedup: dict[str, dict[str, tuple[str, float]]] = {}
 
     async def process_session(self, session_id: str) -> None:
         """Process audio stream for a session."""
@@ -86,6 +110,17 @@ class AudioPipeline:
                 self._verification_loop(session_id)
             )
 
+        # Diarization loop handles STT when diarization is enabled.
+        # When disabled, fall back to the legacy STT-only loop.
+        diarization_task = None
+        if self.overlap_detector is not None and settings.diarization_enabled:
+            diarization_task = asyncio.create_task(
+                self._diarization_loop(session_id)
+            )
+            logger.info("[%s] Mode: Diarization → STT pipeline", session_id[:8])
+        else:
+            logger.info("[%s] Mode: STT-only pipeline (diarization disabled)", session_id[:8])
+
         try:
             while not self._should_stop.get(session_id, False):
                 try:
@@ -98,7 +133,7 @@ class AudioPipeline:
                     audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
                     audio_float = audio_array.astype(np.float32) / 32768.0
 
-                    # Accumulate audio for verification (all chunks, not just speech)
+                    # Accumulate rolling audio for diarization + verification
                     if session_id in self._recent_audio:
                         self._recent_audio[session_id].extend(audio_float.tolist())
 
@@ -109,12 +144,14 @@ class AudioPipeline:
 
                     buffer.add_chunk(audio_float, timestamp)
 
-                    # Transcribe every 5s once buffer has enough data
-                    if buffer.is_ready() and (timestamp - last_transcription_time) >= 5.0:
-                        asyncio.create_task(
-                            self._process_buffer(session_id, buffer.get_buffer_array(), timestamp)
-                        )
-                        last_transcription_time = timestamp
+                    # Fallback STT — CHỈ chạy khi DIARIZATION_ENABLED=false.
+                    # Nếu diarization bật mà model lỗi, KHÔNG fallback về STT-only.
+                    if diarization_task is None and not settings.diarization_enabled:
+                        if buffer.is_ready() and (timestamp - last_transcription_time) >= 5.0:
+                            asyncio.create_task(
+                                self._process_buffer(session_id, buffer.get_buffer_array(), timestamp)
+                            )
+                            last_transcription_time = timestamp
 
                 except asyncio.TimeoutError:
                     continue
@@ -126,16 +163,15 @@ class AudioPipeline:
             logger.info(f"Processing cancelled for session {session_id}")
 
         finally:
-            # Stop verification loop
+            # Stop background loops
             if verification_task and not verification_task.done():
                 verification_task.cancel()
+            if diarization_task and not diarization_task.done():
+                diarization_task.cancel()
 
-            # Final flush
-            if buffer.is_ready():
-                await self._process_buffer(session_id, buffer.get_buffer_array(), timestamp)
-
-            # Cleanup rolling buffer
+            # Cleanup rolling buffer + dedup cache
             self._recent_audio.pop(session_id, None)
+            self._stt_dedup.pop(session_id, None)
 
             logger.info(f"Processing stopped for session {session_id} ({chunk_count} chunks)")
 
@@ -154,6 +190,15 @@ class AudioPipeline:
                 session = session_manager.get_session(session_id)
                 if not session:
                     break
+
+                # Phase 8: skip verification if student has not enrolled
+                if not self.verifier.is_enrolled(session.student_id):
+                    logger.debug(
+                        "[%s] Student %s chưa enroll — bỏ qua verification",
+                        session_id[:8], session.student_id,
+                    )
+                    await asyncio.sleep(settings.verification_interval)
+                    continue
 
                 # Get recent audio for verification
                 audio_deque = self._recent_audio.get(session_id)
@@ -191,22 +236,16 @@ class AudioPipeline:
                 if not passed:
                     session.last_verification_failed = True
                     session.verification_failures_count += 1
-
-                    # Feed into Decision Engine
-                    state = decision_engine.process(
-                        session_id=session_id,
-                        text="[speaker verification failed]",
-                        similarity_score=0.0,
-                        verification_failed=True,
-                    )
-                    session.suspicion_score = state["suspicion_score"]
-                    session.cheating_flag = state["cheating_flag"]
-                    session.flagged_segments_count = state["flagged_count"]
-
                     logger.warning(
                         f"[{session_id[:8]}] Verification FAILED "
                         f"(similarity={similarity:.3f}, failures={session.verification_failures_count})"
                     )
+                    # Phase 8: fail ≥ 3 → flag cheating trực tiếp
+                    if session.verification_failures_count >= 3:
+                        session.cheating_flag = True
+                        logger.warning(
+                            f"[{session_id[:8]}] ⚠️ 3+ verification failures — cheating_flag set"
+                        )
                 else:
                     session.last_verification_failed = False
                     logger.info(
@@ -220,13 +259,233 @@ class AudioPipeline:
 
             await asyncio.sleep(settings.verification_interval)
 
+
+    @staticmethod
+    def _extract_speaker_audio(
+        audio: np.ndarray,
+        segments: list[dict],
+        speaker: str,
+        sample_rate: int,
+    ) -> np.ndarray:
+        """Concatenate audio slices belonging to the given speaker."""
+        chunks = []
+        for seg in segments:
+            if seg.get("speaker") != speaker:
+                continue
+            lo = int(seg["start"] * sample_rate)
+            hi = int(seg["end"] * sample_rate)
+            lo = max(0, min(lo, len(audio)))
+            hi = max(lo, min(hi, len(audio)))
+            if hi > lo:
+                chunks.append(audio[lo:hi])
+        if not chunks:
+            return np.array([], dtype=np.float32)
+        return np.concatenate(chunks)
+
+    @staticmethod
+    def _dominant_speaker(segments: list[dict]) -> str:
+        """Return the speaker with the most total speaking time."""
+        duration: dict[str, float] = {}
+        for seg in segments:
+            spk = seg.get("speaker", "")
+            if spk:
+                duration[spk] = duration.get(spk, 0.0) + (seg["end"] - seg["start"])
+        return max(duration, key=lambda k: duration[k]) if duration else ""
+
+    def _identify_exam_taker(
+        self,
+        segments: list[dict],
+        audio_buffer: np.ndarray,
+        student_id: str,
+        sample_rate: int,
+    ) -> tuple[str, bool]:
+        """
+        Xác định speaker nào là thí sinh:
+        - Nếu sinh viên đã enroll: so sánh embedding từng speaker với enrollment
+          → speaker có cosine sim cao nhất = thí sinh
+        - Nếu chưa enroll: fallback về dominant-by-time
+
+        Returns: (speaker_id, is_verified)
+        """
+        if not segments:
+            return "", False
+
+        if (
+            self.verifier is not None
+            and self.verifier.is_enrolled(student_id)
+        ):
+            enrollment = self.verifier.load_enrollment(student_id)
+            if enrollment is not None:
+                unique_spk = list({s["speaker"] for s in segments})
+                best_spk = ""
+                best_sim = -1.0
+
+                for spk in unique_spk:
+                    spk_audio = self._extract_speaker_audio(
+                        audio_buffer, segments, spk, sample_rate
+                    )
+                    # Need at least 1.5s to get a reliable embedding
+                    if len(spk_audio) < int(1.5 * sample_rate):
+                        continue
+                    try:
+                        emb = self.verifier.extract_embedding(spk_audio, sample_rate)
+                        sim = max(0.0, min(1.0, float(np.dot(enrollment, emb))))
+                        if sim > best_sim:
+                            best_sim = sim
+                            best_spk = spk
+                    except Exception as exc:
+                        logger.debug("Embedding failed for %s: %s", spk, exc)
+
+                if best_spk:
+                    verified = best_sim >= settings.speaker_verification_threshold
+                    logger.info(
+                        "[%s] Exam taker: %s (sim=%.3f, verified=%s)",
+                        student_id, best_spk, best_sim, verified,
+                    )
+                    return best_spk, verified
+
+        # Fallback: dominant by speaking time (no enrollment)
+        dominant = self._dominant_speaker(segments)
+        logger.debug("No enrollment — exam taker by dominant time: %s", dominant)
+        return dominant, False
+
+    async def _diarization_loop(self, session_id: str) -> None:
+        """
+        Sliding-window diarization loop:
+          - Window: 15s of audio analysed per run
+          - Step:   7.5s (50% overlap → max 7.5s conversation loss instead of 15s)
+          1. Diarize → N speakers
+          2. Identify exam taker via verification embedding (fallback: dominant-by-time)
+          3. STT ALL speakers with role label (thí sinh / người lạ)
+          4. Embedding → SLM on every transcript
+          5. Jaccard dedup prevents duplicate alerts from overlapping windows
+        """
+        DIARIZATION_WINDOW = 15.0   # seconds of audio analysed per run
+        DIARIZATION_STEP   = 7.5    # run every N seconds (50% overlap)
+
+        logger.info(
+            "[%s] Diarization loop started (window=%.0fs, step=%.0fs)",
+            session_id[:8], DIARIZATION_WINDOW, DIARIZATION_STEP,
+        )
+
+        # Wait for first full window
+        await asyncio.sleep(DIARIZATION_WINDOW + 2.0)
+
+        while not self._should_stop.get(session_id, False):
+            try:
+                session = session_manager.get_session(session_id)
+                if not session:
+                    break
+
+                audio_deque = self._recent_audio.get(session_id)
+                if audio_deque is None:
+                    await asyncio.sleep(DIARIZATION_STEP)
+                    continue
+
+                window_samples = int(DIARIZATION_WINDOW * settings.audio_sample_rate)
+                if len(audio_deque) < window_samples:
+                    await asyncio.sleep(DIARIZATION_STEP)
+                    continue
+
+                # ── Take last DIARIZATION_WINDOW seconds ─────────────────────
+                audio_buffer = np.array(
+                    list(audio_deque)[-window_samples:], dtype=np.float32
+                )
+                buf_timestamp = (datetime.now() - session.started_at).total_seconds()
+
+                logger.info(
+                    "[%s] Diarization: running on %.1fs audio",
+                    session_id[:8], DIARIZATION_WINDOW,
+                )
+
+                # ── Step 1: Diarize ───────────────────────────────────────────
+                loop = asyncio.get_event_loop()
+                overlap_detected, overlap_conf, diar_segments = await loop.run_in_executor(
+                    None,
+                    self.overlap_detector.detect,
+                    audio_buffer,
+                    settings.audio_sample_rate,
+                )
+
+                unique_spk = list({s["speaker"] for s in diar_segments})
+
+                # ── Step 2: Identify exam taker ───────────────────────────────
+                exam_taker, exam_taker_verified = await loop.run_in_executor(
+                    None,
+                    self._identify_exam_taker,
+                    diar_segments,
+                    audio_buffer,
+                    session.student_id,
+                    settings.audio_sample_rate,
+                )
+
+                # Store diarization result for UI
+                session.last_diarization_result = {
+                    "num_speakers": len(unique_spk),
+                    "speakers": unique_spk,
+                    "segments": diar_segments,
+                    "confidence": overlap_conf,
+                    "overlap": overlap_detected,
+                    "audio_duration": DIARIZATION_WINDOW,
+                    "dominant_speaker": exam_taker,
+                }
+
+                if overlap_detected:
+                    session.last_overlap_detected = True
+                    session.overlap_count += 1
+                    logger.warning(
+                        "[%s] Overlap: %d speakers (conf=%.2f, total=%d)",
+                        session_id[:8], len(unique_spk), overlap_conf, session.overlap_count,
+                    )
+                else:
+                    logger.info(
+                        "[%s] Speakers: %s | exam_taker=%s (verified=%s)",
+                        session_id[:8],
+                        ", ".join(sorted(unique_spk)) if unique_spk else "none",
+                        exam_taker, exam_taker_verified,
+                    )
+
+                if not diar_segments:
+                    await asyncio.sleep(DIARIZATION_STEP)
+                    continue
+
+                # ── Step 3: STT ALL speakers with role labels ─────────────────
+                for spk in unique_spk:
+                    spk_audio = self._extract_speaker_audio(
+                        audio_buffer, diar_segments, spk, settings.audio_sample_rate
+                    )
+                    if len(spk_audio) < int(0.5 * settings.audio_sample_rate):
+                        logger.debug(
+                            "[%s] Speaker %s audio too short (%.2fs), skipping STT",
+                            session_id[:8], spk, len(spk_audio) / settings.audio_sample_rate,
+                        )
+                        continue
+
+                    role = "thí sinh" if spk == exam_taker else "người lạ"
+                    logger.info("[%s] STT speaker %s (%s)", session_id[:8], spk, role)
+
+                    await self._process_buffer(
+                        session_id, spk_audio, buf_timestamp,
+                        speaker=spk, speaker_role=role,
+                    )
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in diarization loop: {e}", exc_info=True)
+
+            await asyncio.sleep(DIARIZATION_STEP)
+
+
     async def _process_buffer(
         self,
         session_id: str,
         audio: np.ndarray,
         timestamp: float,
+        speaker: str = "",
+        speaker_role: str = "",
     ) -> None:
-        """STT → Embedding → Decision Engine → Update session state."""
+        """STT → Dedup → Embedding → SLM → Update session state."""
         try:
             # 1. Transcribe
             result = self.stt.transcribe(audio, settings.audio_sample_rate)
@@ -239,6 +498,23 @@ class AudioPipeline:
             if confidence < MIN_CONFIDENCE:
                 logger.debug(f"Low confidence ({confidence:.2f}), skipping: '{text[:40]}'")
                 return
+
+            # 2. Jaccard dedup — tránh duplicate do sliding window 50% overlap
+            if speaker:
+                session_dedup = self._stt_dedup.setdefault(session_id, {})
+                last_text, last_ts = session_dedup.get(speaker, ("", 0.0))
+                if last_text and (timestamp - last_ts) < 20.0:
+                    words_new = set(text.lower().split())
+                    words_old = set(last_text.lower().split())
+                    if words_new and words_old:
+                        jaccard = len(words_new & words_old) / len(words_new | words_old)
+                        if jaccard > 0.70:
+                            logger.debug(
+                                "[%s] Dedup skip %s (jaccard=%.2f)",
+                                session_id[:8], speaker, jaccard,
+                            )
+                            return
+                session_dedup[speaker] = (text, timestamp)
 
             duration = len(audio) / settings.audio_sample_rate
             segment = TranscriptSegment(
@@ -258,15 +534,18 @@ class AudioPipeline:
             session.transcript_segments.append(segment)
 
             logger.info(
-                f"[{session_id[:8]}] STT: '{text[:60]}' (conf={confidence:.2f})"
+                "[%s] STT [%s•%s]: '%s' (conf=%.2f)",
+                session_id[:8], speaker, speaker_role, text[:60], confidence,
             )
 
-            # Push STT result to frontend via WebSocket
+            # Push STT result to frontend
             session.last_transcript = {
                 "text": text,
                 "confidence": confidence,
                 "timestamp": timestamp,
                 "similarity": 0.0,  # updated below after embedding
+                "speaker": speaker,
+                "speaker_role": speaker_role,
             }
 
             # 2. Embedding similarity (only if exam_question is set)
@@ -305,55 +584,18 @@ class AudioPipeline:
                     f"(similarity={similarity:.2f})"
                 )
 
-            # 4. Overlap detection (runs on rolling audio buffer for context)
-            overlap_detected = False
-            if self.overlap_detector is not None and settings.diarization_enabled:
-                audio_deque = self._recent_audio.get(session_id)
-                if audio_deque is not None:
-                    min_samples = int(
-                        settings.min_diarization_audio_seconds * settings.audio_sample_rate
-                    )
-                    if len(audio_deque) >= min_samples:
-                        audio_buffer = np.array(list(audio_deque), dtype=np.float32)
-                        loop = asyncio.get_event_loop()
-                        overlap_detected, overlap_conf, diar_segments = await loop.run_in_executor(
-                            None,
-                            self.overlap_detector.detect,
-                            audio_buffer,
-                            settings.audio_sample_rate,
-                        )
-                        # Always store latest diarization result for UI display
-                        unique_spk = list({s["speaker"] for s in diar_segments})
-                        session.last_diarization_result = {
-                            "num_speakers": len(unique_spk),
-                            "speakers": unique_spk,
-                            "segments": diar_segments,
-                            "confidence": overlap_conf,
-                            "overlap": overlap_detected,
-                            "audio_duration": len(audio_buffer) / settings.audio_sample_rate,
-                        }
-                        if overlap_detected:
-                            session.last_overlap_detected = True
-                            session.overlap_count += 1
-                            logger.info(
-                                f"[{session_id[:8]}] Overlap detected "
-                                f"(conf={overlap_conf:.2f}, count={session.overlap_count})"
-                            )
-
-            # 5. Decision Engine
-            state = decision_engine.process(
-                session_id=session_id,
-                text=text,
-                similarity_score=similarity,
-                timestamp=timestamp,
-                slm_verdict=slm_verdict,
-                overlap_detected=overlap_detected,
-            )
-
-            # 6. Sync back to session state
-            session.suspicion_score = state["suspicion_score"]
-            session.cheating_flag = state["cheating_flag"]
-            session.flagged_segments_count = state["flagged_count"]
+            # 4. SLM warning — nếu SLM xác nhận liên quan đến câu hỏi thi → hiện warning
+            if slm_verdict:
+                session.cheating_flag = True
+                session.last_slm_alert = {
+                    "text": text,
+                    "timestamp": timestamp,
+                    "similarity": similarity,
+                }
+                logger.warning(
+                    f"[{session_id[:8]}] ⚠️ SLM ALERT: related to exam question "
+                    f"(sim={similarity:.2f}) — '{text[:60]}'"
+                )
 
         except Exception as e:
             logger.error(f"Error in _process_buffer: {e}", exc_info=True)

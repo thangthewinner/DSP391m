@@ -15,7 +15,6 @@ from src.core.models import (
 )
 from src.core.session import session_manager
 from src.processing import pipeline as pipeline_module
-from src.processing.decision_engine import decision_engine
 from src.storage.transcript_store import TranscriptStore
 
 logger = logging.getLogger(__name__)
@@ -97,12 +96,10 @@ async def get_exam_status(session_id: str):
     return ExamStatusResponse(
         session_id=session.session_id,
         status=session.status,
-        current_suspicion_score=session.suspicion_score,
         cheating_flag=session.cheating_flag,
-        flagged_segments_count=session.flagged_segments_count,
         elapsed_time_seconds=elapsed,
-        last_verification_time=None,
-        verification_status="passed",
+        last_verification_time=session.last_verification_time,
+        verification_status="failed" if session.last_verification_failed else "passed",
     )
 
 
@@ -123,8 +120,6 @@ async def get_exam_report(session_id: str):
     elif session.started_at:
         elapsed = (datetime.now() - session.started_at).total_seconds()
 
-    decision_report = decision_engine.get_report(session_id)
-
     return {
         "session_id": session_id,
         "student_id": session.student_id,
@@ -134,13 +129,9 @@ async def get_exam_report(session_id: str):
         "started_at": session.started_at.isoformat(),
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
         "elapsed_seconds": elapsed,
-        # Decision engine results
-        "cheating_detected": decision_report["cheating_detected"],
-        "suspicion_score": decision_report["suspicion_score"],
-        "max_suspicion_score": decision_report["max_suspicion_score"],
-        "confidence": decision_report["confidence"],
-        "rationale": decision_report["rationale"],
-        "flagged_segments": decision_report["flagged_segments"],
+        "cheating_detected": session.cheating_flag,
+        "verification_failures": session.verification_failures_count,
+        "overlap_count": session.overlap_count,
         # Full transcript
         "transcript": [
             {
@@ -153,6 +144,84 @@ async def get_exam_report(session_id: str):
         ],
         "total_segments": len(segments),
     }
+
+
+@router.get("/events/{session_id}")
+async def poll_events(session_id: str):
+    """
+    Return and clear all pending events for a session.
+    Frontend polls this every ~1.5s instead of maintaining a second WebSocket.
+    """
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    import datetime as _dt
+    now_ts = _dt.datetime.now().timestamp()
+    events = []
+
+    if session.last_transcript is not None:
+        tr = session.last_transcript
+        session.last_transcript = None
+        events.append({
+            "type": "transcript_log",
+            "text": tr["text"],
+            "confidence": tr["confidence"],
+            "similarity": tr["similarity"],
+            "timestamp": tr["timestamp"],
+            "speaker": tr.get("speaker", ""),
+            "speaker_role": tr.get("speaker_role", ""),  # thí sinh / người lạ
+        })
+
+    if session.last_slm_alert is not None:
+        alert = session.last_slm_alert
+        session.last_slm_alert = None
+        events.append({
+            "type": "slm_alert",
+            "text": alert["text"],
+            "similarity": alert["similarity"],
+            "timestamp": alert["timestamp"],
+        })
+
+    if session.last_diarization_result is not None:
+        result = session.last_diarization_result
+        session.last_diarization_result = None
+        events.append({
+            "type": "diarization_log",
+            "num_speakers": result["num_speakers"],
+            "speakers": result["speakers"],
+            "segments": result["segments"],
+            "confidence": result["confidence"],
+            "overlap": result["overlap"],
+            "audio_duration": result["audio_duration"],
+            "dominant_speaker": result.get("dominant_speaker"),  # Phase 8
+            "timestamp": now_ts,
+        })
+
+    if session.last_overlap_detected:
+        session.last_overlap_detected = False
+        events.append({
+            "type": "overlap_alert",
+            "overlap_count": session.overlap_count,
+            "timestamp": now_ts,
+        })
+
+    if session.last_verification_failed:
+        session.last_verification_failed = False
+        events.append({
+            "type": "verification_alert",
+            "similarity": session.last_verification_similarity,
+            "failures_count": session.verification_failures_count,
+            "timestamp": now_ts,
+        })
+
+    if session.cheating_flag:
+        events.append({
+            "type": "cheating_alert",
+            "timestamp": now_ts,
+        })
+
+    return {"events": events, "timestamp": now_ts}
 
 
 @router.get("/sessions")

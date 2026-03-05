@@ -14,11 +14,19 @@ Real-time verbal cheating detection for online exams. Captures microphone audio,
 | STT | PhoWhisper-small (CTranslate2) | Vietnamese speech → text |
 | Embedding | Vietnamese SBERT | Semantic similarity to exam content |
 | SLM | Qwen2.5-3B-Instruct (GGUF) | Confirm cheating via reasoning |
-| Speaker ID | SpeechBrain ECAPA-TDNN | Verify student identity |
-| Diarization | NeMo Streaming Sortformer | Detect multiple speakers |
-| Decision | Suspicion score engine | Decay + threshold scoring |
+| Speaker ID | SpeechBrain ECAPA-TDNN | Verify student identity + identify exam taker |
+| Diarization | NeMo Streaming Sortformer | Detect & separate multiple speakers |
 
-Audio flows: `Browser mic → WebSocket → VAD → STT → Embedding → SLM → Decision Engine`
+Audio flows:
+
+```
+Browser mic → WebSocket → VAD → rolling buffer
+    ↓
+Diarization (sliding window 15s, step 7.5s)
+    → Identify exam taker (verification embedding / dominant-by-time)
+    → STT ALL speakers
+    → Embedding → SLM → Alert if related to exam
+```
 
 ---
 
@@ -44,7 +52,7 @@ uv run uvicorn src.api.main:app --reload
 uv run streamlit run frontend/app.py
 ```
 
-Open `http://localhost:8501` → select exam → click **Bắt đầu giám sát** → allow mic.
+Open `http://localhost:8501` → enroll voice → select exam → click **Bắt đầu giám sát** → allow mic.
 
 ### Key `.env` options
 
@@ -65,23 +73,22 @@ Browser
   └─ JS getUserMedia → PCM int16 → base64 JSON
        └─ WebSocket /ws/audio/{session_id}
             └─ FastAPI AudioPipeline
-                 ├─ VAD (Silero)          — drop silence
-                 ├─ AudioBuffer (10s)     — sliding window
-                 ├─ STT (PhoWhisper)      — transcribe
-                 ├─ Embedding (SBERT)     — similarity score
-                 ├─ SLM (Qwen2.5)        — reasoning verdict
-                 ├─ Speaker Verifier      — identity check (async loop)
-                 ├─ Diarization (NeMo)    — overlap detection
-                 └─ Decision Engine       — suspicion score + decay
-                      └─ WebSocket push → Streamlit log panel
+                 ├─ VAD (Silero)            — drop silence
+                 ├─ Rolling buffer          — deque for diarization + verification
+                 ├─ Diarization (NeMo)      — sliding window 15s/7.5s step
+                 │    ├─ Identify exam taker (enrollment embedding or dominant)
+                 │    ├─ STT ALL speakers (PhoWhisper)
+                 │    ├─ Embedding (SBERT)  — semantic similarity
+                 │    ├─ SLM (Qwen2.5)     — reasoning verdict
+                 │    └─ Jaccard dedup      — skip duplicates from window overlap
+                 ├─ Speaker Verifier        — periodic identity check (async loop)
+                 └─ WebSocket push → Streamlit log panel
 ```
 
-**Suspicion scoring:**
-- Similarity ≥ 0.75 + SLM=YES → +3 pts
-- Similarity ≥ 0.60 → +1 pt
-- Speaker overlap → +1 pt
-- Verification fail → +2 pts
-- Score decays 10%/chunk; threshold = 10 → cheating flag
+**Cheating detection:**
+- SLM confirms spoken content matches exam → `cheating_flag = True`
+- Verification fails ≥ 3 times → `cheating_flag = True`
+- Speaker overlap → overlap count + alert
 
 ---
 
@@ -90,11 +97,11 @@ Browser
 ```
 .
 ├── frontend/
-│   └── app.py              # Streamlit UI (mic capture, log panel, report)
+│   └── app.py              # Streamlit UI (enrollment, mic capture, log panel, report)
 ├── src/
 │   ├── api/
 │   │   ├── main.py         # FastAPI app + lifespan (model loading)
-│   │   ├── routes/         # REST endpoints (start/stop/status/report)
+│   │   ├── routes/         # REST endpoints (start/stop/status/report/enroll)
 │   │   └── websocket/
 │   │       └── audio_handler.py  # WebSocket audio stream handler
 │   ├── core/
@@ -109,8 +116,7 @@ Browser
 │       ├── embedding.py    # Vietnamese SBERT similarity
 │       ├── slm.py          # Qwen2.5 GGUF reasoning
 │       ├── speaker_verification.py  # ECAPA-TDNN identity
-│       ├── overlap_detector.py      # NeMo Sortformer diarization
-│       └── decision_engine.py       # Scoring + decay logic
+│       └── overlap_detector.py      # NeMo Sortformer diarization
 ├── exams/                  # Exam content (.txt) for semantic matching
 ├── models/                 # Downloaded model weights (gitignored)
 ├── storage/                # Transcripts + enrollments (gitignored)

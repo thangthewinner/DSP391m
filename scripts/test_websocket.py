@@ -44,7 +44,7 @@ async def test_websocket(base_url: str, session_id: str):
     print(f"\n  Connecting to WebSocket...")
     try:
         async with websockets.connect(ws_url) as ws:
-            print("  ✅ Connected!")
+            print("Connected!")
 
             # Send a few audio chunks
             for i in range(3):
@@ -80,10 +80,10 @@ async def test_websocket(base_url: str, session_id: str):
                 print("  ← No final response")
 
     except Exception as e:
-        print(f"  ❌ WebSocket error: {e}")
+        print(f"WebSocket error: {e}")
         return
 
-    print("\n  ✅ WebSocket test complete!")
+    print("\n  WebSocket test complete!")
 
 
 def main():

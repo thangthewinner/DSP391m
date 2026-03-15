@@ -9,9 +9,13 @@ Usage:
 import argparse
 import json
 import sys
-import time
 
 import requests
+
+if __name__ != "__main__":
+    import pytest
+
+    pytest.skip("Utility script; skip during pytest collection", allow_module_level=True)
 
 BASE_URL = "http://localhost:8000"
 
@@ -144,15 +148,15 @@ def test_docs():
 
 
 def main():
+    global BASE_URL
     parser = argparse.ArgumentParser(description="API Test Script")
     parser.add_argument("--base-url", default=BASE_URL, help="Base URL")
     args = parser.parse_args()
 
-    global BASE_URL
     BASE_URL = args.base_url
 
     print(f"\n{'='*55}")
-    print(f"  AI Proctoring API Test Suite")
+    print("  AI Proctoring API Test Suite")
     print(f"  Target: {BASE_URL}")
     print(f"{'='*55}")
 

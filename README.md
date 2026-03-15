@@ -1,127 +1,77 @@
-# AI Exam Proctoring System
-
-Real-time verbal cheating detection for online exams. Captures microphone audio, transcribes Vietnamese speech, and flags semantically suspicious answers using a multi-layer AI pipeline.
-
-**Stack:** FastAPI · Streamlit · Silero VAD · PhoWhisper · Vietnamese SBERT · Qwen2.5-3B · ECAPA-TDNN · NeMo Sortformer
-
----
+# DSP391m - AI Exam Proctoring (MVP)
 
 ## Overview
+DSP391m is a local, real-time exam proctoring system for spoken Vietnamese exams.
 
-| Layer | Model | Purpose |
-|---|---|---|
-| VAD | Silero VAD v4 | Filter silence |
-| STT | PhoWhisper-small (CTranslate2) | Vietnamese speech → text |
-| Embedding | Vietnamese SBERT | Semantic similarity to exam content |
-| SLM | Qwen2.5-3B-Instruct (GGUF) | Confirm cheating via reasoning |
-| Speaker ID | SpeechBrain ECAPA-TDNN | Verify student identity + identify exam taker |
-| Diarization | NeMo Streaming Sortformer | Detect & separate multiple speakers |
+The system monitors microphone audio during an exam session and applies these core rules:
+- Voice enrollment is required before starting an exam.
+- Candidate identity is re-verified periodically during the session.
+- If verification fails repeatedly (default: 3 times), the session is terminated.
+- Multi-speaker overlap is monitored, but overlap alone is not cheating.
+- If exam-related content is detected from any speaker, it is flagged as cheating.
 
-Audio flows:
+### Main components
+- **Backend**: FastAPI (`src/api`)
+- **Frontend**: Streamlit (`frontend/app.py`)
+- **Audio pipeline**: VAD -> STT -> similarity -> optional SLM reasoning (`src/processing/pipeline.py`)
+- **Storage**: session-centric logs/reports under `storage/sessions/`
 
-```
-Browser mic → WebSocket → VAD → rolling buffer
-    ↓
-Diarization (sliding window 15s, step 7.5s)
-    → Identify exam taker (verification embedding / dominant-by-time)
-    → STT ALL speakers
-    → Embedding → SLM → Alert if related to exam
-```
+## Setup
 
----
+### 1. Prerequisites
+- Python 3.11+
+- [`uv`](https://github.com/astral-sh/uv)
 
-## Setup & Run
-
-**Requirements:** Python 3.11, `uv`
-
+### 2. Install dependencies
 ```bash
-# 1. Install dependencies
 uv sync
+```
 
-# 2. Configure
-cp .env.example .env   # edit TORCH_DEVICE, enable/disable modules
+### 3. Configure environment
+```bash
+cp .env.example .env
+```
+Edit `.env` as needed (device, model paths, feature toggles). Important keys include:
+- `TORCH_DEVICE`
+- `SPEAKER_VERIFICATION_ENABLED`
+- `VERIFICATION_INTERVAL`
+- `VERIFICATION_MAX_FAILURES`
+- `DIARIZATION_ENABLED`
+- `SLM_ENABLED`
+- `EVENT_SCHEMA_VERSION`
+- `REPORT_SCHEMA_VERSION`
 
-# 3. Download models
+### 4. Download models
+```bash
 uv run python scripts/download_models.py --all
-# or selectively: --stt --slm --diarization
+```
+Or download selectively (for example `--stt`, `--slm`, `--diarization`).
 
-# 4. Start backend
+## Run
+
+### Terminal 1: start backend
+```bash
 uv run uvicorn src.api.main:app --reload
+```
 
-# 5. Start frontend (new terminal)
+### Terminal 2: start frontend
+```bash
 uv run streamlit run frontend/app.py
 ```
 
-Open `http://localhost:8501` → enroll voice → select exam → click **Bắt đầu giám sát** → allow mic.
+Open `http://localhost:8501` and run the full flow:
+1. Enroll voice
+2. Start session
+3. Speak/send audio
+4. Stop session
+5. Review report
 
-### Key `.env` options
-
-```env
-TORCH_DEVICE=cpu              # or cuda
-SLM_ENABLED=true
-SPEAKER_VERIFICATION_ENABLED=true
-DIARIZATION_ENABLED=true
-DIARIZATION_MODEL_PATH=./models/diarization/diar_streaming_sortformer_4spk-v2.nemo
-```
-
----
-
-## Architecture
-
-```
-Browser
-  └─ JS getUserMedia → PCM int16 → base64 JSON
-       └─ WebSocket /ws/audio/{session_id}
-            └─ FastAPI AudioPipeline
-                 ├─ VAD (Silero)            — drop silence
-                 ├─ Rolling buffer          — deque for diarization + verification
-                 ├─ Diarization (NeMo)      — sliding window 15s/7.5s step
-                 │    ├─ Identify exam taker (enrollment embedding or dominant)
-                 │    ├─ STT ALL speakers (PhoWhisper)
-                 │    ├─ Embedding (SBERT)  — semantic similarity
-                 │    ├─ SLM (Qwen2.5)     — reasoning verdict
-                 │    └─ Jaccard dedup      — skip duplicates from window overlap
-                 ├─ Speaker Verifier        — periodic identity check (async loop)
-                 └─ WebSocket push → Streamlit log panel
-```
-
-**Cheating detection:**
-- SLM confirms spoken content matches exam → `cheating_flag = True`
-- Verification fails ≥ 3 times → `cheating_flag = True`
-- Speaker overlap → overlap count + alert
-
----
-
-## Project Structure
-
-```
-.
-├── frontend/
-│   └── app.py              # Streamlit UI (enrollment, mic capture, log panel, report)
-├── src/
-│   ├── api/
-│   │   ├── main.py         # FastAPI app + lifespan (model loading)
-│   │   ├── routes/         # REST endpoints (start/stop/status/report/enroll)
-│   │   └── websocket/
-│   │       └── audio_handler.py  # WebSocket audio stream handler
-│   ├── core/
-│   │   ├── config.py       # Pydantic settings (from .env)
-│   │   ├── models.py       # Pydantic data models
-│   │   └── session.py      # In-memory session manager
-│   └── processing/
-│       ├── pipeline.py     # Orchestrates full audio pipeline
-│       ├── vad.py          # Silero VAD (frame-by-frame)
-│       ├── buffer.py       # Sliding audio buffer
-│       ├── stt.py          # PhoWhisper transcription
-│       ├── embedding.py    # Vietnamese SBERT similarity
-│       ├── slm.py          # Qwen2.5 GGUF reasoning
-│       ├── speaker_verification.py  # ECAPA-TDNN identity
-│       └── overlap_detector.py      # NeMo Sortformer diarization
-├── exams/                  # Exam content (.txt) for semantic matching
-├── models/                 # Downloaded model weights (gitignored)
-├── storage/                # Transcripts + enrollments (gitignored)
-├── scripts/
-│   ├── download_models.py  # Download all models from HuggingFace
-│   └── convert_phowhisper.py  # Convert to CTranslate2 format
-└── .env                    # Runtime configuration
-```
+## Useful API endpoints
+- `POST /api/enroll/{student_id}`
+- `POST /api/exam/start`
+- `POST /api/exam/stop/{session_id}`
+- `GET /api/exam/status/{session_id}`
+- `GET /api/exam/events/{session_id}`
+- `GET /api/exam/report/{session_id}`
+- `GET /api/exam/history`
+- `WS /ws/audio/{session_id}`

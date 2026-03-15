@@ -31,6 +31,14 @@ FIFO_LEN = 40             # ~3.2s FIFO buffer
 SPKCACHE_UPDATE_PERIOD = 300  # speaker cache update period
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """Convert a value to float with a safe fallback."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class OverlapDetector:
     """
     Speaker overlap detection using NeMo Streaming Sortformer.
@@ -136,11 +144,8 @@ class OverlapDetector:
             for seg in predicted_segments[0]:
                 if isinstance(seg, dict):
                     speaker = str(seg.get("speaker", seg.get("label", "")))
-                    try:
-                        start = float(seg.get("start", seg.get("start_time", 0.0)))
-                        end = float(seg.get("end", seg.get("end_time", 0.0)))
-                    except (TypeError, ValueError):
-                        start, end = 0.0, 0.0
+                    start = _safe_float(seg.get("start", seg.get("start_time", 0.0)))
+                    end = _safe_float(seg.get("end", seg.get("end_time", 0.0)))
                 elif isinstance(seg, (list, tuple)) and len(seg) >= 3:
                     # (start, end, speaker) or (speaker, start, end)
                     try:

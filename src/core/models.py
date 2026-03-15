@@ -1,11 +1,12 @@
 """Pydantic data models for API and internal state."""
 
+from collections import deque
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Deque, Optional
 
-import numpy as np
 from pydantic import BaseModel, Field
+from src.core.config import settings
 
 
 class SessionStatus(str, Enum):
@@ -64,6 +65,25 @@ class TranscriptSegment(BaseModel):
     timestamp_end: float = Field(..., description="Segment end time in seconds")
     text: str = Field(..., description="Transcribed text")
     confidence: float = Field(..., description="Confidence score (0-1)")
+    speaker_id: Optional[str] = Field(
+        default=None, description="Speaker identifier from diarization (if available)"
+    )
+    speaker_role: str = Field(
+        default="unknown", description="candidate|other|unknown"
+    )
+    source: str = Field(default="stt_only", description="stt_only|diarization")
+    similarity: float = Field(
+        default=0.0, description="Similarity score to exam question (0-1)"
+    )
+    slm_verdict: bool = Field(
+        default=False, description="Whether SLM confirmed exam-related content"
+    )
+    is_exam_related: bool = Field(
+        default=False, description="Whether content is considered exam-related"
+    )
+    is_candidate_speech: bool = Field(
+        default=False, description="Whether segment is from the enrolled candidate"
+    )
 
 
 class ExamSessionCreate(BaseModel):
@@ -71,7 +91,9 @@ class ExamSessionCreate(BaseModel):
 
     student_id: str = Field(..., description="Student user ID")
     exam_id: str = Field(default="default", description="Exam identifier")
-    exam_question: str = Field(default="", description="Exam question text for semantic analysis")
+    exam_question: str = Field(
+        default="", description="Exam question text for semantic analysis"
+    )
     duration_minutes: int = Field(default=60, description="Expected exam duration")
 
 
@@ -111,7 +133,9 @@ class ExamStatusResponse(BaseModel):
     last_verification_time: Optional[datetime] = Field(
         None, description="Last verification time"
     )
-    verification_status: str = Field(default="passed", description="Verification status")
+    verification_status: str = Field(
+        default="passed", description="Verification status"
+    )
 
 
 class HealthResponse(BaseModel):
@@ -121,8 +145,12 @@ class HealthResponse(BaseModel):
     models_loaded: bool = Field(..., description="Models loaded status")
     version: str = Field(..., description="API version")
     slm_loaded: bool = Field(default=False, description="SLM reasoning model loaded")
-    verifier_loaded: bool = Field(default=False, description="Speaker verifier model loaded")
-    diarization_loaded: bool = Field(default=False, description="Diarization model loaded")
+    verifier_loaded: bool = Field(
+        default=False, description="Speaker verifier model loaded"
+    )
+    diarization_loaded: bool = Field(
+        default=False, description="Diarization model loaded"
+    )
 
 
 class SessionState(BaseModel):
@@ -135,7 +163,9 @@ class SessionState(BaseModel):
     status: SessionStatus
     started_at: datetime
     ended_at: Optional[datetime] = None
-    cheating_flag: bool = False
+
+    cheating_flag: bool = Field(default=False)
+
     transcript_segments: list[TranscriptSegment] = Field(default_factory=list)
     # Pre-computed embedding of exam_question (set on session start)
     question_embedding: Optional[Any] = Field(default=None, exclude=True)
@@ -149,12 +179,29 @@ class SessionState(BaseModel):
     # Overlap detection state (Phase 6)
     last_overlap_detected: bool = False
     overlap_count: int = 0
-    last_diarization_result: Optional[dict] = None  # {num_speakers, segments, confidence}
+    last_diarization_result: Optional[dict] = (
+        None  # {num_speakers, segments, confidence}
+    )
 
     # Latest STT result to push to frontend (reset after send)
     last_transcript: Optional[dict] = None  # {text, confidence, similarity, timestamp}
 
     # SLM warning — set when SLM confirms related content (reset after send)
     last_slm_alert: Optional[dict] = None  # {text, timestamp, similarity}
+
+    # Event queue for frontend polling (drained FIFO by /events)
+    events: Deque[dict] = Field(default_factory=deque, exclude=True)
+
+    def enqueue_event(self, event: dict, max_events: int = 200) -> None:
+        """Enqueue an event for frontend polling.
+
+        Args:
+            event: Event payload matching frontend schema.
+            max_events: Max events to keep per session (drop oldest on overflow).
+        """
+        event.setdefault("schema_version", settings.event_schema_version)
+        if len(self.events) >= max_events:
+            self.events.popleft()
+        self.events.append(event)
 
     model_config = {"arbitrary_types_allowed": True}

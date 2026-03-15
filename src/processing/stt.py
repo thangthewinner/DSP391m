@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import numpy as np
-from faster_whisper import WhisperModel
+from faster_whisper import WhisperModel  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 

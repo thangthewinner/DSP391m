@@ -12,12 +12,9 @@ Flow:
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from llama_cpp import Llama, LlamaGrammar
 
 PROMPT_TEMPLATE = """\
 <|im_start|>system

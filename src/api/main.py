@@ -135,6 +135,8 @@ async def lifespan(app: FastAPI):
 
         # Initialize transcript store
         transcript_store = TranscriptStore()
+        retention_result = await transcript_store.apply_retention()
+        logger.info("Retention cleanup: %s", retention_result)
 
         # Initialize pipeline
         pipeline_module.pipeline = AudioPipeline(
@@ -147,10 +149,16 @@ async def lifespan(app: FastAPI):
             overlap_detector=overlap_detector,
         )
 
-        slm_status = f"loaded ({settings.slm_model_path.name})" if slm else "disabled/not loaded"
+        slm_model_name = settings.slm_model_path.name if settings.slm_model_path else "unknown"
+        diar_model_name = (
+            settings.diarization_model_path.name
+            if settings.diarization_model_path
+            else "unknown"
+        )
+        slm_status = f"loaded ({slm_model_name})" if slm else "disabled/not loaded"
         verifier_status = "loaded" if verifier else "disabled/not loaded"
         diar_status = (
-            f"loaded ({settings.diarization_model_path.name})"
+            f"loaded ({diar_model_name})"
             if overlap_detector
             else "disabled/not loaded"
         )

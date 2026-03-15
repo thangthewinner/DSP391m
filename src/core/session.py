@@ -22,6 +22,7 @@ class SessionManager:
     ) -> SessionState:
         """Create a new exam session."""
         session_id = str(uuid4())
+
         session = SessionState(
             session_id=session_id,
             student_id=student_id,
@@ -46,7 +47,8 @@ class SessionManager:
         """Stop an exam session."""
         session = self._sessions.get(session_id)
         if session:
-            session.status = SessionStatus.COMPLETED
+            if session.status == SessionStatus.ACTIVE:
+                session.status = SessionStatus.COMPLETED
             session.ended_at = datetime.now()
 
             # Cancel processing task if exists

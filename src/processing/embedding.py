@@ -1,7 +1,7 @@
 """Text embedding using Vietnamese SBERT for semantic similarity detection."""
 
 import logging
-from typing import Optional
+from typing import Any
 
 import numpy as np
 
@@ -15,7 +15,7 @@ class EmbeddingProcessor:
 
     def __init__(self, device: str = "cpu"):
         self.device = device
-        self.model = None
+        self.model: Any = None
 
     def load_model(self) -> None:
         """Load Vietnamese SBERT model."""

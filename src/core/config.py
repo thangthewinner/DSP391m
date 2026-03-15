@@ -18,34 +18,59 @@ class Settings(BaseSettings):
     )
 
     # Model paths
-    model_cache_dir: Path = Field(default=Path("./models"), description="Model cache directory")
-    hf_home: Path = Field(default=Path("./models/.cache"), description="Hugging Face cache")
+    model_cache_dir: Path = Field(
+        default=Path("./models"), description="Model cache directory"
+    )
+    hf_home: Path = Field(
+        default=Path("./models/.cache"), description="Hugging Face cache"
+    )
 
     # API configuration
     api_host: str = Field(default="0.0.0.0", description="API host")
     api_port: int = Field(default=8000, description="API port")
-    ws_max_size: int = Field(default=10485760, description="WebSocket max message size (10MB)")
+    ws_max_size: int = Field(
+        default=10485760, description="WebSocket max message size (10MB)"
+    )
 
     # Processing configuration
     audio_sample_rate: int = Field(default=16000, description="Audio sample rate in Hz")
-    audio_chunk_size: float = Field(default=2.0, description="Audio chunk size in seconds")
+    audio_chunk_size: float = Field(
+        default=2.0, description="Audio chunk size in seconds"
+    )
     vad_threshold: float = Field(default=0.5, description="VAD threshold (0-1)")
     buffer_size: float = Field(default=10.0, description="Audio buffer size in seconds")
 
     # Thresholds (for Phase 2+)
-    similarity_threshold_low: float = Field(default=0.60, description="Low similarity threshold")
+    similarity_threshold_low: float = Field(
+        default=0.60, description="Low similarity threshold"
+    )
     similarity_threshold_high: float = Field(
         default=0.75, description="High similarity threshold"
     )
-    cheating_threshold: float = Field(default=10.0, description="Cheating detection threshold")
-    decay_factor: float = Field(default=0.9, description="Suspicion score decay factor")
+    # API contracts / schema versioning
+    event_schema_version: str = Field(
+        default="1.0.0", description="Schema version for realtime events payload"
+    )
+    report_schema_version: str = Field(
+        default="1.0.0", description="Schema version for report payload"
+    )
 
     # Storage
-    storage_root: Path = Field(default=Path("./storage"), description="Storage root directory")
-    debug_save_audio: bool = Field(default=False, description="Save audio for debugging")
+    storage_root: Path = Field(
+        default=Path("./storage"), description="Storage root directory"
+    )
+    debug_save_audio: bool = Field(
+        default=False, description="Save audio for debugging"
+    )
+    storage_retention_days: int = Field(
+        default=30,
+        description="Retention period for session folders and index records (days, <=0 disables cleanup)",
+    )
 
     # Device
-    torch_device: Literal["cuda", "cpu"] = Field(default="cpu", description="PyTorch device (cuda/cpu)")
+    torch_device: Literal["cuda", "cpu"] = Field(
+        default="cpu", description="PyTorch device (cuda/cpu)"
+    )
 
     # Model names
     vad_model_name: str = Field(default="silero_vad", description="VAD model name")
@@ -55,7 +80,7 @@ class Settings(BaseSettings):
     stt_model_override: Optional[Path] = Field(
         default=None,
         description="Optional: Path to converted STT model (overrides stt_model_name)",
-        alias="STT_MODEL_PATH"
+        alias="STT_MODEL_PATH",
     )
 
     # Speaker Verification configuration (Phase 5)
@@ -66,25 +91,33 @@ class Settings(BaseSettings):
         default=0.75, description="Cosine similarity threshold for speaker verification"
     )
     verification_interval: int = Field(
-        default=300, description="Seconds between verification checks (default: 5 minutes)"
+        default=300,
+        description="Seconds between verification checks (default: 5 minutes)",
+    )
+    verification_max_failures: int = Field(
+        default=3,
+        description="Maximum consecutive verification failures before session termination",
     )
     min_enrollment_samples: int = Field(
         default=3, description="Minimum audio samples required for enrollment"
     )
     min_verification_audio_seconds: float = Field(
-        default=3.0, description="Minimum audio length (seconds) required for verification"
+        default=3.0,
+        description="Minimum audio length (seconds) required for verification",
     )
 
     # Diarization / Overlap Detection configuration (Phase 6)
-    diarization_enabled: bool = Field(default=True, description="Enable overlap detection")
+    diarization_enabled: bool = Field(
+        default=True, description="Enable overlap detection"
+    )
     diarization_model_path: Optional[Path] = Field(
         default=None,
         description="Path to NeMo .nemo model file for diarization",
-        alias="DIARIZATION_MODEL_PATH"
+        alias="DIARIZATION_MODEL_PATH",
     )
     min_diarization_audio_seconds: float = Field(
         default=10.0,
-        description="Minimum audio length (seconds) required for diarization"
+        description="Minimum audio length (seconds) required for diarization",
     )
 
     # SLM configuration (Phase 3)
@@ -92,14 +125,16 @@ class Settings(BaseSettings):
     slm_model_path: Optional[Path] = Field(
         default=None,
         description="Path to GGUF model file (e.g. models/slm/qwen2.5-3b-instruct-q4_k_m.gguf)",
-        alias="SLM_MODEL_PATH"
+        alias="SLM_MODEL_PATH",
     )
     slm_n_gpu_layers: int = Field(
         default=0,
         description="Number of layers to offload to GPU (0=CPU only, -1=all)",
-        alias="SLM_N_GPU_LAYERS"
+        alias="SLM_N_GPU_LAYERS",
     )
-    slm_max_tokens: int = Field(default=4, description="Max tokens for SLM output (YES/NO)")
+    slm_max_tokens: int = Field(
+        default=4, description="Max tokens for SLM output (YES/NO)"
+    )
     slm_context_length: int = Field(default=512, description="SLM context window size")
 
     @property
@@ -147,6 +182,11 @@ class Settings(BaseSettings):
         """Get reports directory."""
         return self.storage_root / "reports"
 
+    @property
+    def sessions_dir(self) -> Path:
+        """Get session-centric storage directory."""
+        return self.storage_root / "sessions"
+
     def ensure_directories(self) -> None:
         """Create all required directories if they don't exist."""
         directories = [
@@ -157,6 +197,7 @@ class Settings(BaseSettings):
             self.transcripts_dir,
             self.logs_dir,
             self.reports_dir,
+            self.sessions_dir,
             self.vad_model_path,
             self.stt_model_path,
             self.slm_model_dir,

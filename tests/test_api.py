@@ -38,7 +38,7 @@ def test_start_exam():
         },
     )
 
-    assert response.status_code == 201
+    assert response.status_code == 200
     data = response.json()
     assert "session_id" in data
     assert "websocket_url" in data
@@ -54,6 +54,6 @@ def test_api_structure():
     assert "/" in routes
     assert "/health" in routes
     assert "/api/exam/start" in routes
-    assert "/api/exam/stop" in routes
+    assert "/api/exam/stop/{session_id}" in routes
     assert "/api/exam/status/{session_id}" in routes
     assert "/ws/audio/{session_id}" in routes

@@ -11,9 +11,13 @@ Usage:
 import argparse
 import asyncio
 import json
-import struct
-import wave
+
 import numpy as np
+
+if __name__ != "__main__":
+    import pytest
+
+    pytest.skip("Utility script; skip during pytest collection", allow_module_level=True)
 
 
 async def test_websocket(base_url: str, session_id: str):
@@ -23,11 +27,9 @@ async def test_websocket(base_url: str, session_id: str):
         print("Install websockets: uv pip install websockets")
         return
 
-    import requests
-
     ws_url = f"ws://{base_url.replace('http://', '')}/ws/audio/{session_id}"
     print(f"\n{'='*55}")
-    print(f"  WebSocket Test")
+    print("  WebSocket Test")
     print(f"  URL: {ws_url}")
     print(f"{'='*55}")
 
@@ -41,7 +43,7 @@ async def test_websocket(base_url: str, session_id: str):
     audio_bytes = audio.tobytes()
     audio_b64 = __import__("base64").b64encode(audio_bytes).decode()
 
-    print(f"\n  Connecting to WebSocket...")
+    print("\n  Connecting to WebSocket...")
     try:
         async with websockets.connect(ws_url) as ws:
             print("  ✅ Connected!")

@@ -48,7 +48,7 @@ def test_vad_speech_detection():
 
     # Generate noisy audio (simulating speech)
     noisy_audio = np.random.randn(16000).astype(np.float32) * 0.5
-    is_speech_noisy = vad.process_chunk(noisy_audio)
+    vad.process_chunk(noisy_audio)
 
     # Silent audio should not be detected as speech
     assert not is_speech_silent

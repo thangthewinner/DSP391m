@@ -8,12 +8,6 @@ import logging
 import sys
 from pathlib import Path
 
-# Add project root to path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
-from src.core.config import settings
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -23,15 +17,19 @@ logger = logging.getLogger(__name__)
 
 def convert_model():
     """Convert PhoWhisper to CTranslate2 format."""
+    # Add project root to path for local imports.
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+
+    from src.core.config import settings
+
     try:
         import ctranslate2
-        from transformers import WhisperProcessor
     except ImportError as e:
         logger.error(f"Missing dependency: {e}")
         logger.error("Install with: uv pip install ctranslate2 transformers")
         return False
 
-    model_name = "vinai/PhoWhisper-small"
     source_path = settings.model_cache_dir / "stt" / "phowhisper-small"
     output_path = settings.model_cache_dir / "stt" / "phowhisper-small-ct2"
 

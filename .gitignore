@@ -42,7 +42,7 @@ models/
 !models/.gitkeep
 
 # Storage (data files)
-storage/
+/storage/
 !storage/.gitkeep
 
 # Logs
@@ -72,3 +72,10 @@ ai-docs/
 
 # .cursor
 .cursor/
+
+# Claude
+.claude/
+.serena/
+.ruff_cache/
+.kilo/
+.codex/

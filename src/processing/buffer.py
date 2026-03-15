@@ -76,6 +76,8 @@ class AudioBuffer:
         if not self._cache_valid:
             self._cached_array = np.array(list(self.buffer), dtype=np.float32)
             self._cache_valid = True
+        if self._cached_array is None:
+            return np.array([], dtype=np.float32)
         return self._cached_array
 
     def get_last_n_seconds(self, n_seconds: float) -> np.ndarray:

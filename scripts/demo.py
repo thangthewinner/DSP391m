@@ -161,7 +161,7 @@ def get_report(session_id: str):
     print(f"  Duration:        {data.get('elapsed_seconds', 0):.1f}s")
 
     # Decision Engine results
-    print(f"\n  ── Decision Engine ──────────────────────")
+    print("\n  ── Decision Engine ──────────────────────")
     cheating = data.get("cheating_detected", False)
     print(f"  Cheating:        {'🚨 YES' if cheating else '✅ NO'}")
     print(f"  Suspicion score: {data.get('suspicion_score', 0):.2f} / 10.0 (threshold)")

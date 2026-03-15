@@ -1,7 +1,5 @@
 """Integration tests for end-to-end audio pipeline."""
 
-import asyncio
-
 import numpy as np
 import pytest
 

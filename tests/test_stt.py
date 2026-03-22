@@ -10,7 +10,7 @@ from src.processing.stt import STTProcessor
 def stt_processor():
     """Create STT processor instance."""
     return STTProcessor(
-        model_name="vinai/PhoWhisper-small",
+        model_name="large-v3",
         device="cpu",
         compute_type="int8",
     )
@@ -18,7 +18,7 @@ def stt_processor():
 
 def test_stt_initialization(stt_processor):
     """Test STT processor initialization."""
-    assert stt_processor.model_name == "vinai/PhoWhisper-small"
+    assert stt_processor.model_name == "large-v3"
     assert stt_processor.device == "cpu"
     assert stt_processor.compute_type == "int8"
     assert stt_processor.model is None

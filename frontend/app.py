@@ -24,8 +24,8 @@ import streamlit.components.v1 as components
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-BACKEND_URL = "http://localhost:8000"
-WS_URL = "ws://localhost:8000"
+BACKEND_URL = "http://0.0.0.0:8000"
+WS_URL = "ws://0.0.0.0:8000"
 EXAMS_DIR = Path(__file__).parent.parent / "exams"
 EXPECTED_EVENT_SCHEMA_VERSION = "1.0.0"
 EXPECTED_REPORT_SCHEMA_VERSION = "1.0.0"
@@ -134,7 +134,26 @@ def process_events(events: list[dict]) -> None:
             )
 
         elif t == "diarization_log":
-            continue
+            num = int(data.get("num_speakers", 0) or 0)
+            speakers = data.get("speakers", []) or []
+            durations = data.get("speaker_durations", {}) or {}
+            overlap = bool(data.get("overlap", False))
+            conf = float(data.get("confidence", 0.0) or 0.0)
+
+            if speakers:
+                speaker_parts = []
+                for spk in speakers:
+                    d = float(durations.get(spk, 0.0) or 0.0)
+                    speaker_parts.append(f"{spk}({d:.1f}s)")
+                speaker_str = ", ".join(speaker_parts)
+            else:
+                speaker_str = "none"
+
+            overlap_str = "overlap" if overlap else "no-overlap"
+            add_log(
+                "INFO",
+                f"[DIAR] speakers={num} [{speaker_str}] ({overlap_str}, conf={conf:.2f})",
+            )
 
         elif t == "overlap_alert":
             # Ignore overlap warnings in UI by product choice.

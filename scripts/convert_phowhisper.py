@@ -30,8 +30,8 @@ def convert_model():
         logger.error("Install with: uv pip install ctranslate2 transformers")
         return False
 
-    source_path = settings.model_cache_dir / "stt" / "phowhisper-small"
-    output_path = settings.model_cache_dir / "stt" / "phowhisper-small-ct2"
+    source_path = settings.model_cache_dir / "stt" / "phowhisper-base"
+    output_path = settings.model_cache_dir / "stt" / "phowhisper-base-ct2"
 
     logger.info("=" * 60)
     logger.info("PhoWhisper Model Conversion")

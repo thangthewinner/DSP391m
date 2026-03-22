@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # Thresholds (for Phase 2+)
     similarity_threshold_low: float = Field(
-        default=0.60, description="Low similarity threshold"
+        default=0.50, description="Low similarity threshold"
     )
     similarity_threshold_high: float = Field(
         default=0.75, description="High similarity threshold"
@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     # Model names
     vad_model_name: str = Field(default="silero_vad", description="VAD model name")
     stt_model_name: str = Field(
-        default="vinai/PhoWhisper-small", description="STT model name"
+        default="large-v3", description="faster-whisper model name"
     )
     stt_model_override: Optional[Path] = Field(
         default=None,
@@ -118,6 +118,14 @@ class Settings(BaseSettings):
     min_diarization_audio_seconds: float = Field(
         default=10.0,
         description="Minimum audio length (seconds) required for diarization",
+    )
+    diarization_window_seconds: float = Field(
+        default=15.0,
+        description="Sliding window length (seconds) used by diarization loop",
+    )
+    diarization_step_seconds: float = Field(
+        default=7.5,
+        description="Step interval (seconds) between diarization runs",
     )
 
     # SLM configuration (Phase 3)

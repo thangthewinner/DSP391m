@@ -24,19 +24,19 @@ logger = logging.getLogger(__name__)
 def download_silero_vad():
     """
     Download Silero VAD model with retry logic.
-    
+
     Note: We don't save the JIT model because it can't be serialized.
     torch.hub will cache it automatically in ~/.cache/torch/hub/
     """
     logger.info("Downloading Silero VAD model...")
     logger.info("Note: Model will be cached by torch.hub (not saved to models/)")
-    
+
     # Try multiple times with different approaches
     for attempt in range(3):
         try:
             if attempt > 0:
                 logger.info(f"Retry attempt {attempt + 1}/3...")
-            
+
             # Try with trust_repo=True to avoid confirmation
             model, utils = torch.hub.load(
                 repo_or_dir="snakers4/silero-vad",
@@ -56,42 +56,44 @@ def download_silero_vad():
             logger.warning(f"Attempt {attempt + 1} failed: {e}")
             if attempt < 2:
                 import time
+
                 time.sleep(2)  # Wait before retry
             continue
-    
+
     logger.error("✗ Failed to download Silero VAD after 3 attempts")
     logger.info("Note: The system will auto-download on first run")
     return False
 
 
-def download_phowhisper():
-    """Download PhoWhisper model."""
-    logger.info("Downloading PhoWhisper model...")
-    logger.info("Note: This downloads the PyTorch model.")
-    logger.info("faster-whisper will auto-convert to CTranslate2 on first use (1-2 min).")
-    
+def download_stt_model():
+    """Download CTranslate2 Whisper Large v3 model."""
+    logger.info("Downloading CTranslate2 Whisper Large v3 model...")
+    logger.info("Source: Systran/faster-whisper-large-v3")
+
     try:
-        # Download to local directory for faster-whisper
-        model_path = settings.stt_model_path / "phowhisper-small"
+        # Download local CTranslate2 model directory
+        model_path = settings.stt_model_path / "whisper-large-v3-ct2"
         model_path.mkdir(parents=True, exist_ok=True)
-        
+
         logger.info(f"Downloading to {model_path}...")
-        
-        # Download with all files
+
+        # Download CTranslate2 model files
         snapshot_download(
-            repo_id="vinai/PhoWhisper-small",
+            repo_id="Systran/faster-whisper-large-v3",
             local_dir=str(model_path),
             local_dir_use_symlinks=False,
-            ignore_patterns=["*.msgpack", "*.h5", "*.ot"],  # Skip unnecessary files
+            ignore_patterns=["*.ot", "*.h5"],
         )
 
-        logger.info(f"✓ PhoWhisper saved to {model_path}")
-        logger.info("  Note: Model will be converted to CTranslate2 format on first server start")
+        logger.info(f"✓ Whisper Large v3 (CTranslate2) saved to {model_path}")
+        logger.info(f"  Optional override: STT_MODEL_PATH={model_path}")
         return True
 
     except Exception as e:
-        logger.error(f"✗ Failed to download PhoWhisper: {e}")
-        logger.info("  Fallback: faster-whisper will download directly from HuggingFace on first run")
+        logger.error(f"✗ Failed to download Whisper Large v3: {e}")
+        logger.info(
+            "  Fallback: faster-whisper will download by model name on first run"
+        )
         return False
 
 
@@ -186,8 +188,12 @@ def download_diarization() -> bool:
 
 def main():
     """Main download function."""
-    parser = argparse.ArgumentParser(description="Download models for AI Proctoring System")
-    parser.add_argument("--slm", action="store_true", help="Download SLM model (Phase 3)")
+    parser = argparse.ArgumentParser(
+        description="Download models for AI Proctoring System"
+    )
+    parser.add_argument(
+        "--slm", action="store_true", help="Download SLM model (Phase 3)"
+    )
     parser.add_argument(
         "--slm-size",
         choices=["1.5b", "3b"],
@@ -195,7 +201,9 @@ def main():
         help="SLM model size (default: 3b)",
     )
     parser.add_argument(
-        "--diarization", action="store_true", help="Download diarization model (Phase 6)"
+        "--diarization",
+        action="store_true",
+        help="Download diarization model (Phase 6)",
     )
     parser.add_argument("--all", action="store_true", help="Download all models")
     args = parser.parse_args()
@@ -215,11 +223,13 @@ def main():
         logger.info("\n[1/2] Downloading Silero VAD...")
         results.append(("Silero VAD", download_silero_vad()))
 
-        logger.info("\n[2/2] Downloading PhoWhisper...")
-        results.append(("PhoWhisper", download_phowhisper()))
+        logger.info("\n[2/2] Downloading Whisper Large v3...")
+        results.append(("Whisper Large v3", download_stt_model()))
 
     if args.slm or args.all:
-        logger.info(f"\n[SLM] Downloading Qwen2.5-{args.slm_size.upper()}-Instruct-GGUF...")
+        logger.info(
+            f"\n[SLM] Downloading Qwen2.5-{args.slm_size.upper()}-Instruct-GGUF..."
+        )
         results.append((f"SLM (Qwen2.5-{args.slm_size})", download_slm(args.slm_size)))
 
     if args.diarization or args.all:

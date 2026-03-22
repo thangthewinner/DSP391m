@@ -1,4 +1,4 @@
-"""Speech-to-Text using PhoWhisper (faster-whisper backend)."""
+"""Speech-to-Text using Whisper (faster-whisper backend)."""
 
 import logging
 from pathlib import Path
@@ -11,11 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 class STTProcessor:
-    """Speech-to-Text processor using PhoWhisper with faster-whisper backend."""
+    """Speech-to-Text processor using Whisper with faster-whisper backend."""
 
     def __init__(
         self,
-        model_name: str = "vinai/PhoWhisper-small",
+        model_name: str = "large-v3",
         device: str = "cuda",
         compute_type: str = "float16",
     ):
@@ -39,19 +39,19 @@ class STTProcessor:
 
     def load_model(self, model_path: Optional[Path] = None) -> None:
         """
-        Load PhoWhisper model in CTranslate2 format.
-        
+        Load Whisper model (HF ID or local CTranslate2 path).
+
         Args:
             model_path: Path to CTranslate2 model directory (must contain model.bin)
         """
         try:
             if model_path is None:
                 model_source = self.model_name
-                logger.info(f"Loading PhoWhisper from HuggingFace: {model_source}")
+                logger.info(f"Loading Whisper from HuggingFace: {model_source}")
             else:
                 model_source = str(model_path)
-                logger.info(f"Loading PhoWhisper from local: {model_source}")
-            
+                logger.info(f"Loading Whisper from local: {model_source}")
+
             logger.info(f"Device: {self.device}, Compute type: {self.compute_type}")
 
             # Load CTranslate2 model
@@ -61,15 +61,15 @@ class STTProcessor:
                 compute_type=self.compute_type,
             )
 
-            logger.info("✓ PhoWhisper model loaded successfully")
+            logger.info("✓ Whisper model loaded successfully")
 
         except Exception as e:
-            logger.error(f"✗ Failed to load PhoWhisper model: {e}")
+            logger.error(f"✗ Failed to load Whisper model: {e}")
             if model_path:
                 logger.error(
                     "Troubleshooting:\n"
                     f"  1. Check if model.bin exists in {model_path}\n"
-                    "  2. If not, run: python scripts/convert_phowhisper.py\n"
+                    "  2. If not, run: python scripts/download_models.py\n"
                     "  3. Or convert manually with ct2-transformers-converter"
                 )
             else:
@@ -80,9 +80,7 @@ class STTProcessor:
                 )
             raise
 
-    def transcribe(
-        self, audio: np.ndarray, sample_rate: int = 16000
-    ) -> Dict[str, Any]:
+    def transcribe(self, audio: np.ndarray, sample_rate: int = 16000) -> Dict[str, Any]:
         """
         Transcribe audio to text.
 
@@ -109,7 +107,7 @@ class STTProcessor:
             segments, info = self.model.transcribe(
                 audio,
                 language="vi",  # Vietnamese
-                beam_size=1,  # Greedy decoding for speed
+                beam_size=5,
                 vad_filter=False,  # We already did VAD
                 without_timestamps=False,
             )
@@ -136,7 +134,7 @@ class STTProcessor:
             }
 
             logger.debug(
-                f"STT: transcribed {len(audio)/sample_rate:.2f}s audio, "
+                f"STT: transcribed {len(audio) / sample_rate:.2f}s audio, "
                 f"text_length={len(full_text)}, confidence={avg_confidence:.3f}"
             )
 
@@ -177,7 +175,7 @@ class STTProcessor:
             segments, info = self.model.transcribe(
                 audio,
                 language="vi",
-                beam_size=1,
+                beam_size=5,
                 vad_filter=False,
                 word_timestamps=True,
             )

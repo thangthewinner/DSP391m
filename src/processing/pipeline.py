@@ -41,10 +41,7 @@ VERIFICATION_AUDIO_BUFFER_SECONDS = 30
 
 
 def _verification_terminate_reason(max_failures: int) -> str:
-    return (
-        f"Identity verification failed {max_failures} times. "
-        "Session is terminated."
-    )
+    return f"Identity verification failed {max_failures} times. Session is terminated."
 
 
 class AudioPipeline:
@@ -224,7 +221,9 @@ class AudioPipeline:
         )
         verifier = self.verifier
         if verifier is None:
-            logger.warning("[%s] Verification loop disabled (verifier unavailable)", session_id[:8])
+            logger.warning(
+                "[%s] Verification loop disabled (verifier unavailable)", session_id[:8]
+            )
             return
 
         # Wait for first interval before first check
@@ -404,6 +403,7 @@ class AudioPipeline:
         if self.verifier is not None and self.verifier.is_enrolled(student_id):
             enrollment = self.verifier.load_enrollment(student_id)
             if enrollment is not None:
+                enrollment = self.verifier._l2_normalize(enrollment)
                 unique_spk = list({s["speaker"] for s in segments})
                 best_spk = ""
                 best_sim = -1.0
@@ -417,6 +417,7 @@ class AudioPipeline:
                         continue
                     try:
                         emb = self.verifier.extract_embedding(spk_audio, sample_rate)
+                        emb = self.verifier._l2_normalize(emb)
                         sim = max(0.0, min(1.0, float(np.dot(enrollment, emb))))
                         if sim > best_sim:
                             best_sim = sim
@@ -451,22 +452,28 @@ class AudioPipeline:
           4. Embedding → SLM on every transcript
           5. Jaccard dedup prevents duplicate alerts from overlapping windows
         """
-        DIARIZATION_WINDOW = 15.0  # seconds of audio analysed per run
-        DIARIZATION_STEP = 7.5  # run every N seconds (50% overlap)
+        diar_window = float(settings.diarization_window_seconds)
+        diar_step = float(settings.diarization_step_seconds)
+        if diar_window <= 0.0:
+            diar_window = 15.0
+        if diar_step <= 0.0:
+            diar_step = diar_window / 2.0
 
         logger.info(
             "[%s] Diarization loop started (window=%.0fs, step=%.0fs)",
             session_id[:8],
-            DIARIZATION_WINDOW,
-            DIARIZATION_STEP,
+            diar_window,
+            diar_step,
         )
         overlap_detector = self.overlap_detector
         if overlap_detector is None:
-            logger.warning("[%s] Diarization loop disabled (model unavailable)", session_id[:8])
+            logger.warning(
+                "[%s] Diarization loop disabled (model unavailable)", session_id[:8]
+            )
             return
 
         # Wait for first full window
-        await asyncio.sleep(DIARIZATION_WINDOW + 2.0)
+        await asyncio.sleep(diar_window + 2.0)
 
         while not self._should_stop.get(session_id, False):
             try:
@@ -476,15 +483,15 @@ class AudioPipeline:
 
                 audio_deque = self._recent_audio.get(session_id)
                 if audio_deque is None:
-                    await asyncio.sleep(DIARIZATION_STEP)
+                    await asyncio.sleep(diar_step)
                     continue
 
-                window_samples = int(DIARIZATION_WINDOW * settings.audio_sample_rate)
+                window_samples = int(diar_window * settings.audio_sample_rate)
                 if len(audio_deque) < window_samples:
-                    await asyncio.sleep(DIARIZATION_STEP)
+                    await asyncio.sleep(diar_step)
                     continue
 
-                # ── Take last DIARIZATION_WINDOW seconds ─────────────────────
+                # ── Take last diarization window seconds ─────────────────────
                 audio_buffer = np.array(
                     list(audio_deque)[-window_samples:], dtype=np.float32
                 )
@@ -493,7 +500,7 @@ class AudioPipeline:
                 logger.info(
                     "[%s] Diarization: running on %.1fs audio",
                     session_id[:8],
-                    DIARIZATION_WINDOW,
+                    diar_window,
                 )
 
                 # ── Step 1: Diarize ───────────────────────────────────────────
@@ -509,7 +516,18 @@ class AudioPipeline:
                     settings.audio_sample_rate,
                 )
 
-                unique_spk = list({s["speaker"] for s in diar_segments})
+                unique_spk = sorted(
+                    {s["speaker"] for s in diar_segments if s.get("speaker")}
+                )
+                speaker_durations: dict[str, float] = {}
+                for seg in diar_segments:
+                    spk = seg.get("speaker", "")
+                    if not spk:
+                        continue
+                    duration = max(
+                        0.0, float(seg.get("end", 0.0)) - float(seg.get("start", 0.0))
+                    )
+                    speaker_durations[spk] = speaker_durations.get(spk, 0.0) + duration
 
                 # ── Step 2: Identify exam taker ───────────────────────────────
                 exam_taker, exam_taker_verified = await loop.run_in_executor(
@@ -526,10 +544,12 @@ class AudioPipeline:
                     "type": "diarization_log",
                     "num_speakers": len(unique_spk),
                     "speakers": unique_spk,
+                    "speaker_durations": speaker_durations,
                     "segments": diar_segments,
                     "confidence": overlap_conf,
                     "overlap": overlap_detected,
-                    "audio_duration": DIARIZATION_WINDOW,
+                    "audio_duration": diar_window,
+                    "step_seconds": diar_step,
                     "dominant_speaker": exam_taker,
                     "timestamp": datetime.now().timestamp(),
                 }
@@ -556,7 +576,7 @@ class AudioPipeline:
                     )
 
                 if not diar_segments:
-                    await asyncio.sleep(DIARIZATION_STEP)
+                    await asyncio.sleep(diar_step)
                     continue
 
                 # ── Step 3: STT ALL speakers with role labels ─────────────────
@@ -600,7 +620,7 @@ class AudioPipeline:
                     )
                     break
 
-            await asyncio.sleep(DIARIZATION_STEP)
+            await asyncio.sleep(diar_step)
 
     async def _process_buffer(
         self,

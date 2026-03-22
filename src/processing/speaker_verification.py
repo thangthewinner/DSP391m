@@ -42,6 +42,15 @@ class SpeakerVerifier:
         self.model: Any = None
         self._classifier: Any = None
 
+    @staticmethod
+    def _l2_normalize(embedding: np.ndarray) -> np.ndarray:
+        """Return L2-normalized embedding for cosine similarity."""
+        vec = embedding.astype(np.float32)
+        norm = float(np.linalg.norm(vec))
+        if norm > 0.0:
+            return vec / norm
+        return vec
+
     def load_model(self) -> None:
         """Load ECAPA-TDNN model from SpeechBrain."""
         import torchaudio  # type: ignore[import-untyped]
@@ -50,7 +59,9 @@ class SpeakerVerifier:
         # SpeechBrain 1.x still calls it — provide a no-op stub
         if not hasattr(torchaudio, "list_audio_backends"):
             torchaudio.list_audio_backends = lambda: []  # type: ignore[attr-defined]
-            logger.debug("Patched torchaudio.list_audio_backends for SpeechBrain compatibility")
+            logger.debug(
+                "Patched torchaudio.list_audio_backends for SpeechBrain compatibility"
+            )
 
         try:
             # speechbrain >= 1.0
@@ -70,7 +81,9 @@ class SpeakerVerifier:
 
         logger.info("✓ SpeechBrain ECAPA-TDNN loaded successfully")
 
-    def extract_embedding(self, audio: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
+    def extract_embedding(
+        self, audio: np.ndarray, sample_rate: int = 16000
+    ) -> np.ndarray:
         """
         Extract 192-dim speaker embedding from audio.
 
@@ -88,7 +101,7 @@ class SpeakerVerifier:
 
         if len(audio) < int(MIN_AUDIO_SECONDS * sample_rate):
             raise ValueError(
-                f"Audio too short: {len(audio)/sample_rate:.1f}s < {MIN_AUDIO_SECONDS}s required"
+                f"Audio too short: {len(audio) / sample_rate:.1f}s < {MIN_AUDIO_SECONDS}s required"
             )
 
         # SpeechBrain expects (batch, time) tensor
@@ -98,8 +111,9 @@ class SpeakerVerifier:
         with torch.no_grad():
             embedding = self._classifier.encode_batch(audio_tensor, audio_len)
 
-        # Shape: (1, 1, 192) → (192,)
-        return embedding.squeeze().cpu().numpy().astype(np.float32)
+        # Shape: (1, 1, 192) → (192,), then normalize for cosine scoring
+        raw = embedding.squeeze().cpu().numpy().astype(np.float32)
+        return self._l2_normalize(raw)
 
     def enroll(
         self,
@@ -127,7 +141,9 @@ class SpeakerVerifier:
             try:
                 emb = self.extract_embedding(audio, sample_rate)
                 embeddings.append(emb)
-                logger.debug("Enrollment sample %d/%d extracted", i + 1, len(audio_samples))
+                logger.debug(
+                    "Enrollment sample %d/%d extracted", i + 1, len(audio_samples)
+                )
             except ValueError as e:
                 logger.warning("Skipping enrollment sample %d: %s", i + 1, e)
 
@@ -137,9 +153,7 @@ class SpeakerVerifier:
 
         # Average embedding (L2-normalized)
         avg_embedding = np.mean(embeddings, axis=0)
-        norm = np.linalg.norm(avg_embedding)
-        if norm > 0:
-            avg_embedding = avg_embedding / norm
+        avg_embedding = self._l2_normalize(avg_embedding)
 
         # Save to disk
         self.enrollment_dir.mkdir(parents=True, exist_ok=True)
@@ -174,7 +188,9 @@ class SpeakerVerifier:
         """
         enrollment = self.load_enrollment(student_id)
         if enrollment is None:
-            logger.warning("No enrollment found for student %s — skipping verification", student_id)
+            logger.warning(
+                "No enrollment found for student %s — skipping verification", student_id
+            )
             return True, 1.0  # Pass by default if not enrolled
 
         try:
@@ -184,7 +200,9 @@ class SpeakerVerifier:
             return True, 1.0  # Pass if audio too short
 
         # Cosine similarity (both embeddings are L2-normalized)
-        similarity = float(np.dot(enrollment, current_embedding))
+        enrollment_norm = self._l2_normalize(enrollment)
+        current_norm = self._l2_normalize(current_embedding)
+        similarity = float(np.dot(enrollment_norm, current_norm))
         similarity = max(0.0, min(1.0, similarity))
 
         passed = similarity >= self.threshold

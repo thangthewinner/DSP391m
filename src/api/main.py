@@ -64,10 +64,11 @@ async def lifespan(app: FastAPI):
             model_path = settings.stt_model_override
             logger.info(f"Using custom STT model: {model_path}")
         else:
-            # Default to CPU model
-            model_path = settings.model_cache_dir / "stt" / "phowhisper-small-ct2"
-            logger.info(f"Using default STT model: {model_path}")
-        
+            model_path = None
+            logger.info(
+                f"Using default STT model from model name: {settings.stt_model_name}"
+            )
+
         stt.load_model(model_path=model_path)
 
         # Initialize Embedding
@@ -107,10 +108,14 @@ async def lifespan(app: FastAPI):
                 )
                 verifier.load_model()
             except Exception as e:
-                logger.warning(f"Failed to load Speaker Verifier, running without it: {e}")
+                logger.warning(
+                    f"Failed to load Speaker Verifier, running without it: {e}"
+                )
                 verifier = None
         else:
-            logger.info("Speaker verification disabled (SPEAKER_VERIFICATION_ENABLED=false)")
+            logger.info(
+                "Speaker verification disabled (SPEAKER_VERIFICATION_ENABLED=false)"
+            )
 
         # Initialize Overlap Detector / Diarization (Phase 6)
         overlap_detector = None
@@ -126,10 +131,14 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"Diarization model not found, running without it: {e}")
                 overlap_detector = None
             except Exception as e:
-                logger.warning(f"Failed to load Diarization model, running without it: {e}")
+                logger.warning(
+                    f"Failed to load Diarization model, running without it: {e}"
+                )
                 overlap_detector = None
         elif settings.diarization_enabled:
-            logger.info("Diarization enabled but DIARIZATION_MODEL_PATH not set — skipping")
+            logger.info(
+                "Diarization enabled but DIARIZATION_MODEL_PATH not set — skipping"
+            )
         else:
             logger.info("Diarization disabled (DIARIZATION_ENABLED=false)")
 
@@ -149,7 +158,9 @@ async def lifespan(app: FastAPI):
             overlap_detector=overlap_detector,
         )
 
-        slm_model_name = settings.slm_model_path.name if settings.slm_model_path else "unknown"
+        slm_model_name = (
+            settings.slm_model_path.name if settings.slm_model_path else "unknown"
+        )
         diar_model_name = (
             settings.diarization_model_path.name
             if settings.diarization_model_path
@@ -158,9 +169,7 @@ async def lifespan(app: FastAPI):
         slm_status = f"loaded ({slm_model_name})" if slm else "disabled/not loaded"
         verifier_status = "loaded" if verifier else "disabled/not loaded"
         diar_status = (
-            f"loaded ({diar_model_name})"
-            if overlap_detector
-            else "disabled/not loaded"
+            f"loaded ({diar_model_name})" if overlap_detector else "disabled/not loaded"
         )
         logger.info(
             f"All models loaded successfully "

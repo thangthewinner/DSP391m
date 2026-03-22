@@ -47,6 +47,13 @@ uv run python scripts/download_models.py --all
 ```
 Or download selectively (for example `--stt`, `--slm`, `--diarization`).
 
+By default, STT uses Whisper Large v3 (`large-v3`) via faster-whisper.
+
+If you want to override STT model path, set in `.env`:
+```bash
+STT_MODEL_PATH=./models/stt/whisper-large-v3-ct2
+```
+
 ## Run
 
 ### Terminal 1: start backend
